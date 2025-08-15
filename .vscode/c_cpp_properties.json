@@ -10,6 +10,8 @@
             "includePath": [
                 "/home/user/src/espcandle/include",
                 "/home/user/src/espcandle/src",
+                "/home/user/src/espcandle/.pio/libdeps/esp32s3/FastLED/src",
+                "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/SPI/src",
                 "/home/user/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/newlib/platform_include",
                 "/home/user/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/freertos/config/include",
                 "/home/user/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/freertos/config/include/freertos",
@@ -317,7 +319,6 @@
                 "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/RainMaker/src",
                 "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/SD/src",
                 "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/SD_MMC/src",
-                "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/SPI/src",
                 "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/SPIFFS/src",
                 "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/SimpleBLE/src",
                 "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/TFLiteMicro/src",
@@ -336,6 +337,8 @@
                 "path": [
                     "/home/user/src/espcandle/include",
                     "/home/user/src/espcandle/src",
+                    "/home/user/src/espcandle/.pio/libdeps/esp32s3/FastLED/src",
+                    "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/SPI/src",
                     "/home/user/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/newlib/platform_include",
                     "/home/user/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/freertos/config/include",
                     "/home/user/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/freertos/config/include/freertos",
@@ -643,7 +646,6 @@
                     "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/RainMaker/src",
                     "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/SD/src",
                     "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/SD_MMC/src",
-                    "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/SPI/src",
                     "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/SPIFFS/src",
                     "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/SimpleBLE/src",
                     "/home/user/.platformio/packages/framework-arduinoespressif32/libraries/TFLiteMicro/src",
