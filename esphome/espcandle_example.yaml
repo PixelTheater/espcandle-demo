@@ -1,0 +1,151 @@
+esphome:
+  name: esp32-candle-01
+  friendly_name: ESP32-Candle-01
+
+esp32:
+  # adafruit feather has a similar spec to the esp32s3 devkitc-n4-r2
+  board: adafruit_feather_esp32s3
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+  # By default, the logger uses the primary hardware serial (UART0) on TX and RX pins.
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "use-key-from-esphome-generated-config"
+
+ota:
+  - platform: esphome
+    password: "use-password-from-esphome-generated-config"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+sensor:
+  - platform: internal_temperature
+    name: "Internal Temperature"
+
+light:
+  - platform: esp32_rmt_led_strip
+    chipset: WS2812
+    pin: 33
+    num_leds: 20
+    rgb_order: GRB
+    name: "RGB LED Strip"
+    effects: 
+    - addressable_rainbow: {}
+    - addressable_rainbow: 
+        name: Rainbow Effect With Custom Values
+        speed: 3
+        width: 80
+    - addressable_color_wipe: {}
+    - addressable_color_wipe: 
+        name: Color Wipe Effect With Custom Values
+        colors: 
+          - red: 60%
+            green: 0%
+            blue: 40%
+            num_leds: 5
+          - red: 20%
+            green: 0%
+            blue: 50%
+            num_leds: 4
+        add_led_interval: 1000ms
+        reverse: False
+    - addressable_twinkle: {}
+    - addressable_twinkle: 
+        name: Twinkle Effect With Custom Values
+        twinkle_probability: 5%
+        progress_interval: 40ms
+  - platform: monochromatic
+    output: pwm_led_1
+    name: "Warm White LED 1"
+    effects:
+      - flicker:
+      - flicker:
+          name: Flicker Effect With Custom Values
+          alpha: 97%
+          intensity: 1.2%
+      - random:
+          name: Random Effect With Custom Values
+          transition_length: 5s
+          update_interval: 10s
+  - platform: monochromatic
+    output: pwm_led_2
+    name: "Warm White LED 2"
+    effects:
+      - flicker:
+      - flicker:
+          name: Flicker Effect With Custom Values
+          alpha: 97%
+          intensity: 1.2%
+      - random:
+          name: Random Effect With Custom Values
+          transition_length: 5s
+          update_interval: 10s    
+  - platform: monochromatic
+    output: pwm_led_3
+    name: "UVA LED"
+    effects:
+      - flicker:
+      - flicker:
+          name: Flicker Effect With Custom Values
+          alpha: 97%
+          intensity: 1.2%
+      - random:
+          name: Random Effect With Custom Values
+          transition_length: 5s
+          update_interval: 10s    
+  - platform: monochromatic
+    output: pwm_led_4
+    name: "Deep Red LED"    
+    effects:
+      - flicker:
+      - flicker:
+          name: Flicker Effect With Custom Values
+          alpha: 97%
+          intensity: 1.2%
+      - random:
+          name: Random Effect With Custom Values
+          transition_length: 5s
+          update_interval: 10s    
+
+# -- I2C Bus --
+i2c:
+  sda: GPIO8
+  scl: GPIO9
+  scan: true
+
+# -- PWM LED Outputs --
+output:
+  - platform: ledc
+    pin: GPIO15
+    id: pwm_led_1
+    max_power: 70%
+  - platform: ledc
+    pin: GPIO16
+    id: pwm_led_2
+    max_power: 70%
+  - platform: ledc
+    pin: GPIO17
+    id: pwm_led_3
+    max_power: 50%
+  - platform: ledc
+    pin: GPIO18
+    id: pwm_led_4
+
+# -- Extra GPIOs as Switches --
+switch:
+  - platform: gpio
+    pin: GPIO10
+    name: "Extra GPIO 10"
+  - platform: gpio
+    pin: GPIO11
+    name: "Extra GPIO 11"
+  - platform: gpio
+    pin: GPIO12
+    name: "Extra GPIO 12" 

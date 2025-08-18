@@ -1,2 +1,5 @@
 .pio
-,vscode
+.vscode
+.DS_Store
+.env
+esphome/espcandle_0*.yaml

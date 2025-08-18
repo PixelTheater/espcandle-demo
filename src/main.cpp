@@ -7,8 +7,9 @@ const int WS2812_PIN = 33;
 const int BUTTON_PIN = 0;
 
 // PWM settings
-const int PWM_FREQ = 5000;
-const int PWM_RESOLUTION = 8;
+const double PWM_FREQ = 5000.0;
+const uint8_t PWM_RESOLUTION = 8;
+const uint8_t PWM_CHANNELS[4] = {0, 1, 2, 3}; // LEDC channels for each LED
 const int MAX_DUTY = (1 << PWM_RESOLUTION) - 1;
 const int MAX_BRIGHTNESS = (MAX_DUTY * 30) / 100; // 30% max brightness
 
@@ -86,8 +87,9 @@ void setup() {
     
     // Initialize PWM LEDs
     for (int i = 0; i < 4; i++) {
-        ledcAttach(LED_PINS[i], PWM_FREQ, PWM_RESOLUTION);
-        ledcWrite(LED_PINS[i], 0);
+        ledcSetup(PWM_CHANNELS[i], 5000.0, 8);
+        ledcAttachPin(LED_PINS[i], PWM_CHANNELS[i]);
+        ledcWrite(PWM_CHANNELS[i], 0);
     }
     
     // Initialize WS2812 LEDs
@@ -170,7 +172,7 @@ void handleButton() {
 void turnOffAllLEDs() {
     // Turn off PWM LEDs
     for (int i = 0; i < 4; i++) {
-        ledcWrite(LED_PINS[i], 0);
+        ledcWrite(PWM_CHANNELS[i], 0);
     }
     
     // Turn off WS2812 LEDs
@@ -178,9 +180,9 @@ void turnOffAllLEDs() {
     FastLED.show();
 }
 
-void setPWMBrightness(int pin, int brightness) {
+void setPWMBrightness(int ledIndex, int brightness) {
     brightness = constrain(brightness, 0, MAX_BRIGHTNESS);
-    ledcWrite(pin, brightness);
+    ledcWrite(PWM_CHANNELS[ledIndex], brightness);
 }
 
 // Candle Mode Functions
@@ -195,15 +197,15 @@ void updateCandleMode() {
     unsigned long currentTime = millis();
     
     if (currentTime - lastFlickerUpdate > random(50, 200)) { // Random flicker timing
-        // Update white LED (pin 15)
+        // Update white LED (index 0)
         int targetBrightness = random(MAX_BRIGHTNESS / 5, MAX_BRIGHTNESS);
         flickerBrightness[0] = lerp8by8(flickerBrightness[0], targetBrightness, 128);
-        setPWMBrightness(LED_PINS[0], flickerBrightness[0]);
+        setPWMBrightness(0, flickerBrightness[0]);
         
-        // Update red LED (pin 16)
+        // Update red LED (index 1)
         targetBrightness = random(MAX_BRIGHTNESS / 5, MAX_BRIGHTNESS);
         flickerBrightness[1] = lerp8by8(flickerBrightness[1], targetBrightness, 128);
-        setPWMBrightness(LED_PINS[1], flickerBrightness[1]);
+        setPWMBrightness(1, flickerBrightness[1]);
         
         lastFlickerUpdate = currentTime;
     }
@@ -211,8 +213,8 @@ void updateCandleMode() {
 
 void exitCandleMode() {
     // Turn off white and red LEDs
-    ledcWrite(LED_PINS[0], 0);
-    ledcWrite(LED_PINS[1], 0);
+    ledcWrite(PWM_CHANNELS[0], 0);
+    ledcWrite(PWM_CHANNELS[1], 0);
 }
 
 // Color Mode Functions
@@ -273,9 +275,9 @@ void enterMagicMode() {
     magicDirection = true;
     lastMagicUpdate = millis();
     
-    // Turn on UV LEDs
-    setPWMBrightness(LED_PINS[2], MAX_BRIGHTNESS);
-    setPWMBrightness(LED_PINS[3], MAX_BRIGHTNESS);
+    // Turn on UV LEDs (indices 2 and 3)
+    setPWMBrightness(2, MAX_BRIGHTNESS);
+    setPWMBrightness(3, MAX_BRIGHTNESS);
 }
 
 void updateMagicMode() {
@@ -307,8 +309,8 @@ void updateMagicMode() {
 
 void exitMagicMode() {
     // Turn off UV LEDs
-    ledcWrite(LED_PINS[2], 0);
-    ledcWrite(LED_PINS[3], 0);
+    ledcWrite(PWM_CHANNELS[2], 0);
+    ledcWrite(PWM_CHANNELS[3], 0);
     
     // Turn off WS2812 LEDs
     fill_solid(leds, NUM_LEDS, CRGB::Black);
