@@ -1,5 +1,6 @@
-.pio
-.vscode
+.pio/
+.vscode/
 .DS_Store
-.env
+.env/
 esphome/espcandle_0*.yaml
+esphome/.esphome/

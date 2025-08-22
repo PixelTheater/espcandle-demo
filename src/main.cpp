@@ -2,16 +2,19 @@
 #include <FastLED.h>
 
 // Pin definitions
-const int LED_PINS[4] = {15, 16, 17, 18}; // White, Red, UV, UV LEDs
+const int LED_PINS[4] = {15, 16, 17, 18}; // White, White, UV, Deep Red LEDs
+const int WHITE_LED_1 = 0;    // GPIO15 - Bright White LED 1
+const int WHITE_LED_2 = 1;    // GPIO16 - Bright White LED 2  
+const int UV_LED = 2;         // GPIO17 - UV LED
+const int RED_LED = 3;        // GPIO18 - Deep Red LED
 const int WS2812_PIN = 33;
 const int BUTTON_PIN = 0;
 
 // PWM settings
 const double PWM_FREQ = 5000.0;
 const uint8_t PWM_RESOLUTION = 8;
-const uint8_t PWM_CHANNELS[4] = {0, 1, 2, 3}; // LEDC channels for each LED
 const int MAX_DUTY = (1 << PWM_RESOLUTION) - 1;
-const int MAX_BRIGHTNESS = (MAX_DUTY * 30) / 100; // 30% max brightness
+const int MAX_BRIGHTNESS = (MAX_DUTY * 15) / 100; // 30% max brightness
 
 // WS2812 settings
 const int NUM_LEDS = 20; // 20 colored LEDs
@@ -41,9 +44,18 @@ unsigned long lastFlickerUpdate = 0;
 unsigned long lastColorUpdate = 0;
 unsigned long lastMagicUpdate = 0;
 unsigned long lastAutoModeChange = 0;
-int flickerBrightness[2] = {0, 0}; // For white and red LEDs
-int colorHue = 0;
-int colorRotation = 0;
+int flickerBrightness[4] = {0, 0, 0, 0}; // For all 4 LEDs
+int targetBrightness[4] = {0, 0, 0, 0};  // Target brightness for smooth transitions
+unsigned long lastCandleDisturbance = 0;
+bool candleIsCalm = true;
+int calmBaseBrightness[4] = {0, 0, 0, 0}; // Base brightness during calm periods
+
+// Color mode variables for smooth transitions
+int currentColorHue = 0;           // Current base hue (0-255)
+unsigned long colorModeStartTime = 0;
+const int COLOR_HISTORY_SIZE = NUM_LEDS + 5; // Extra buffer for smooth blending
+uint8_t colorHistory[COLOR_HISTORY_SIZE];   // Circular buffer of hues
+int colorHistoryIndex = 0;         // Current position in history buffer
 int magicHue = 0;
 bool magicDirection = true; // true = green to purple, false = purple to green
 CandleMode currentAutoMode = CANDLE_MODE;
@@ -87,9 +99,8 @@ void setup() {
     
     // Initialize PWM LEDs
     for (int i = 0; i < 4; i++) {
-        ledcSetup(PWM_CHANNELS[i], 5000.0, 8);
-        ledcAttachPin(LED_PINS[i], PWM_CHANNELS[i]);
-        ledcWrite(PWM_CHANNELS[i], 0);
+        ledcAttach(LED_PINS[i], 5000.0, 8);
+        ledcWrite(LED_PINS[i], 0);
     }
     
     // Initialize WS2812 LEDs
@@ -170,9 +181,9 @@ void handleButton() {
 }
 
 void turnOffAllLEDs() {
-    // Turn off PWM LEDs
+    // Turn off all PWM LEDs
     for (int i = 0; i < 4; i++) {
-        ledcWrite(PWM_CHANNELS[i], 0);
+        ledcWrite(LED_PINS[i], 0);
     }
     
     // Turn off WS2812 LEDs
@@ -182,81 +193,164 @@ void turnOffAllLEDs() {
 
 void setPWMBrightness(int ledIndex, int brightness) {
     brightness = constrain(brightness, 0, MAX_BRIGHTNESS);
-    ledcWrite(PWM_CHANNELS[ledIndex], brightness);
+    ledcWrite(LED_PINS[ledIndex], brightness);
 }
 
 // Candle Mode Functions
 void enterCandleMode() {
-    // Initialize flicker brightness for white and red LEDs
-    flickerBrightness[0] = random(MAX_BRIGHTNESS / 5, MAX_BRIGHTNESS);
-    flickerBrightness[1] = random(MAX_BRIGHTNESS / 5, MAX_BRIGHTNESS);
+    // Initialize all LEDs to off first
+    for (int i = 0; i < 4; i++) {
+        flickerBrightness[i] = 0;
+        targetBrightness[i] = 0;
+        calmBaseBrightness[i] = 0;
+    }
+    
+    // Initialize calm base brightness levels for candle LEDs only
+    calmBaseBrightness[WHITE_LED_1] = (MAX_BRIGHTNESS * 75) / 100; // 75% of max
+    calmBaseBrightness[WHITE_LED_2] = (MAX_BRIGHTNESS * 72) / 100; // 72% of max (slight variation)
+    calmBaseBrightness[RED_LED] = (MAX_BRIGHTNESS * 35) / 100;     // 35% of max
+    // UV_LED stays at 0 (off in candle mode)
+    
+    // Start with calm state for candle LEDs
+    flickerBrightness[WHITE_LED_1] = calmBaseBrightness[WHITE_LED_1];
+    flickerBrightness[WHITE_LED_2] = calmBaseBrightness[WHITE_LED_2];
+    flickerBrightness[RED_LED] = calmBaseBrightness[RED_LED];
+    targetBrightness[WHITE_LED_1] = calmBaseBrightness[WHITE_LED_1];
+    targetBrightness[WHITE_LED_2] = calmBaseBrightness[WHITE_LED_2];
+    targetBrightness[RED_LED] = calmBaseBrightness[RED_LED];
+    
+    candleIsCalm = true;
     lastFlickerUpdate = millis();
+    lastCandleDisturbance = millis();
 }
 
 void updateCandleMode() {
     unsigned long currentTime = millis();
     
-    if (currentTime - lastFlickerUpdate > random(50, 200)) { // Random flicker timing
-        // Update white LED (index 0)
-        int targetBrightness = random(MAX_BRIGHTNESS / 5, MAX_BRIGHTNESS);
-        flickerBrightness[0] = lerp8by8(flickerBrightness[0], targetBrightness, 128);
-        setPWMBrightness(0, flickerBrightness[0]);
+    // Check for disturbance events (every 3-8 seconds during calm periods)
+    if (candleIsCalm && (currentTime - lastCandleDisturbance > random(3000, 8000))) {
+        candleIsCalm = false;
+        lastCandleDisturbance = currentTime;
+    }
+    
+    // Return to calm after 500-1500ms of disturbance
+    if (!candleIsCalm && (currentTime - lastCandleDisturbance > random(500, 1500))) {
+        candleIsCalm = true;
+        lastCandleDisturbance = currentTime;
+    }
+    
+    // Update at 60Hz for smooth transitions
+    if (currentTime - lastFlickerUpdate > 16) { // ~60 FPS
         
-        // Update red LED (index 1)
-        targetBrightness = random(MAX_BRIGHTNESS / 5, MAX_BRIGHTNESS);
-        flickerBrightness[1] = lerp8by8(flickerBrightness[1], targetBrightness, 128);
-        setPWMBrightness(1, flickerBrightness[1]);
+        // Update candle LEDs: WHITE_LED_1, WHITE_LED_2, RED_LED (but NOT UV_LED)
+        int candleLEDs[] = {WHITE_LED_1, WHITE_LED_2, RED_LED};
+        for (int i = 0; i < 3; i++) {
+            int led = candleLEDs[i];
+            
+            if (candleIsCalm) {
+                // Calm period: very gentle variation around base brightness
+                int variation = random(-8, 9); // ±8 brightness units
+                targetBrightness[led] = calmBaseBrightness[led] + variation;
+                targetBrightness[led] = constrain(targetBrightness[led], 
+                                                calmBaseBrightness[led] - 15, 
+                                                calmBaseBrightness[led] + 15);
+            } else {
+                // Disturbance period: more noticeable but still controlled flicker
+                int baseLevel = calmBaseBrightness[led];
+                int flickerRange = baseLevel / 3; // Allow 33% variation from base
+                targetBrightness[led] = random(baseLevel - flickerRange, baseLevel + flickerRange + 1);
+            }
+            
+            // Smooth transition to target (slower during calm, faster during disturbance)
+            int transitionSpeed = candleIsCalm ? 32 : 64; // Slower = more gradual
+            flickerBrightness[led] = lerp8by8(flickerBrightness[led], targetBrightness[led], transitionSpeed);
+            
+            // Apply brightness
+            setPWMBrightness(led, flickerBrightness[led]);
+        }
+        
+        // Ensure UV LED is off in candle mode
+        setPWMBrightness(UV_LED, 0);
         
         lastFlickerUpdate = currentTime;
     }
 }
 
 void exitCandleMode() {
-    // Turn off white and red LEDs
-    ledcWrite(PWM_CHANNELS[0], 0);
-    ledcWrite(PWM_CHANNELS[1], 0);
+    // Turn off all LEDs
+    for (int i = 0; i < 4; i++) {
+        ledcWrite(LED_PINS[i], 0);
+    }
 }
 
 // Color Mode Functions
 void enterColorMode() {
-    colorHue = 0;
-    colorRotation = 0;
+    // Turn off all PWM LEDs (only use WS2812 in color mode)
+    for (int i = 0; i < 4; i++) {
+        ledcWrite(LED_PINS[i], 0);
+    }
+    
+    // Start with a random color each time
+    currentColorHue = random(0, 256);
+    colorModeStartTime = millis();
     lastColorUpdate = millis();
+    colorHistoryIndex = 0;
+    
+    // Initialize color history buffer with random starting hue
+    for (int i = 0; i < COLOR_HISTORY_SIZE; i++) {
+        colorHistory[i] = currentColorHue; // Start with random color
+    }
 }
 
 void updateColorMode() {
     unsigned long currentTime = millis();
     
-    if (currentTime - lastColorUpdate > 150) { // Slower update for smooth rotation
-        // Create 3-4 random color mixtures that slowly rotate
-        const int numColors = 4;
-        int baseHues[numColors];
+    // Update every 50ms for smooth transitions (20 FPS)
+    if (currentTime - lastColorUpdate > 50) {
+        // Calculate progression through rainbow over 60 seconds
+        unsigned long elapsedTime = currentTime - colorModeStartTime;
+        float rainbowProgress = (elapsedTime % 120000) / 120000.0; // 0.0 to 1.0 over 120 seconds
+        currentColorHue = (int)(rainbowProgress * 255); // 0 to 255 hue range
         
-        // Generate random base hues with good spacing
-        for (int i = 0; i < numColors; i++) {
-            baseHues[i] = (colorHue + (i * 64) + random(0, 32)) % 256;
+        // Add new hue to history buffer every ~150ms (3 seconds / 20 LEDs)
+        static unsigned long lastHistoryUpdate = 0;
+        if (currentTime - lastHistoryUpdate > 150) {
+            colorHistory[colorHistoryIndex] = currentColorHue;
+            colorHistoryIndex = (colorHistoryIndex + 1) % COLOR_HISTORY_SIZE;
+            lastHistoryUpdate = currentTime;
         }
         
-        // Apply colors to LEDs with smooth rotation
+        // Apply colors to LEDs with history-based spacing
         for (int i = 0; i < NUM_LEDS; i++) {
-            int colorIndex = ((i + colorRotation) % NUM_LEDS) * numColors / NUM_LEDS;
-            int hue = baseHues[colorIndex];
+            // Calculate which history position this LED should use
+            int historyOffset = i; // Each LED is one step behind the previous
+            int historyPos = (colorHistoryIndex - historyOffset + COLOR_HISTORY_SIZE) % COLOR_HISTORY_SIZE;
+            uint8_t ledHue = colorHistory[historyPos];
             
-            // Add some variation to saturation and value for more natural look
-            uint8_t sat = 200 + random(0, 55); // 200-255 saturation
-            uint8_t val = 180 + random(0, 75); // 180-255 value
+            // Add slight hue variation for more natural look
+            ledHue += random(-3, 4); // ±3 hue variation
             
-            leds[i] = CHSV(hue, sat, val);
+            // Set LED with full saturation and good brightness
+            leds[i] = CHSV(ledHue, 255, 200);
         }
         
-        // Slow rotation - only move every few updates
-        if (currentTime % 3000 < 150) { // Every 3 seconds
-            colorRotation = (colorRotation + 1) % NUM_LEDS;
-        }
-        
-        // Very slow hue shift
-        if (currentTime % 10000 < 150) { // Every 10 seconds
-            colorHue = (colorHue + 8) % 256;
+        // Apply blur effect to smooth transitions (especially at wraparound)
+        // Blend each LED with its neighbors
+        for (int i = 0; i < NUM_LEDS; i++) {
+            int prevLED = (i - 1 + NUM_LEDS) % NUM_LEDS;
+            int nextLED = (i + 1) % NUM_LEDS;
+            
+            // Blend current LED with 20% of each neighbor
+            CRGB blended = leds[i];
+            blended.nscale8(179); // 70% of original (179/255 ≈ 0.7)
+            
+            CRGB prevColor = leds[prevLED];
+            prevColor.nscale8(38); // 15% of neighbor (38/255 ≈ 0.15)
+            
+            CRGB nextColor = leds[nextLED];
+            nextColor.nscale8(38); // 15% of neighbor
+            
+            leds[i] = blended + prevColor + nextColor;
         }
         
         lastColorUpdate = currentTime;
@@ -271,36 +365,60 @@ void exitColorMode() {
 
 // Magic Mode Functions
 void enterMagicMode() {
-    magicHue = 96; // Start with green
+    // Turn off white LEDs in magic mode
+    ledcWrite(LED_PINS[WHITE_LED_1], 0);
+    ledcWrite(LED_PINS[WHITE_LED_2], 0);
+    
+    magicHue = 0; // Start at beginning of color range
     magicDirection = true;
     lastMagicUpdate = millis();
     
-    // Turn on UV LEDs (indices 2 and 3)
-    setPWMBrightness(2, MAX_BRIGHTNESS);
-    setPWMBrightness(3, MAX_BRIGHTNESS);
+    // Turn on UV LED at MAXIMUM brightness (ignore MAX_BRIGHTNESS limit for UV)
+    ledcWrite(LED_PINS[UV_LED], 150); // Full 8-bit PWM for maximum UV output
+    
+    // Turn on deep red LED at reduced brightness (30% less than normal max)
+    int reducedBrightness = (MAX_BRIGHTNESS * 7) / 10; // 70% of max
+    setPWMBrightness(RED_LED, reducedBrightness);
 }
 
 void updateMagicMode() {
     unsigned long currentTime = millis();
     
-    if (currentTime - lastMagicUpdate > 100) { // 10 FPS color transition
-        // Update WS2812 LEDs with green-purple pulse
-        uint8_t brightness = sin8(magicHue) * 255 / 256; // Create pulse effect
+    // Update at 30 FPS for much smoother transitions
+    if (currentTime - lastMagicUpdate > 33) { // ~30 FPS instead of 10 FPS
+        // Calculate smooth progression over time instead of discrete steps
+        unsigned long elapsedTime = currentTime - lastMagicUpdate;
+        static float smoothHue = 0.0;
         
-        for (int i = 0; i < NUM_LEDS; i++) {
-            if (magicDirection) {
-                // Green to purple
-                leds[i] = CHSV(96 + (magicHue / 4), 255, brightness);
-            } else {
-                // Purple to green
-                leds[i] = CHSV(192 - (magicHue / 4), 255, brightness);
-            }
+        // Smooth continuous hue progression (slower than before)
+        smoothHue += 0.5; // Much smaller increment for smoother transitions
+        if (smoothHue >= 255.0) {
+            smoothHue = 0.0;
+            magicDirection = !magicDirection; // Switch direction
         }
         
-        magicHue += 4;
-        if (magicHue >= 255) {
-            magicHue = 0;
-            magicDirection = !magicDirection; // Switch direction
+        // Create smoother brightness pulse using floating point
+        float pulsePhase = smoothHue * 2.0 * PI / 255.0; // Convert to radians
+        uint8_t baseBrightness = (uint8_t)((sin(pulsePhase) * 0.5 + 0.5) * 150); // Smooth sine wave 0-150
+        
+        for (int i = 0; i < NUM_LEDS; i++) {
+            float hueFloat;
+            if (magicDirection) {
+                // Deep purple to dark blue-green (hue range: 192 to 128)
+                hueFloat = 192.0 - (smoothHue * 64.0 / 255.0);
+            } else {
+                // Dark blue-green to deep purple (hue range: 128 to 192)  
+                hueFloat = 128.0 + (smoothHue * 64.0 / 255.0);
+            }
+            
+            // Add subtle per-LED variation for more organic look
+            float ledHueVariation = sin((float)i * 0.3 + smoothHue * 0.02) * 2.0;
+            uint8_t finalHue = (uint8_t)(hueFloat + ledHueVariation);
+            
+            // Slight brightness variation per LED
+            uint8_t ledBrightness = baseBrightness + (uint8_t)(sin((float)i * 0.5 + smoothHue * 0.03) * 10);
+            
+            leds[i] = CHSV(finalHue, 255, ledBrightness);
         }
         
         lastMagicUpdate = currentTime;
@@ -308,9 +426,10 @@ void updateMagicMode() {
 }
 
 void exitMagicMode() {
-    // Turn off UV LEDs
-    ledcWrite(PWM_CHANNELS[2], 0);
-    ledcWrite(PWM_CHANNELS[3], 0);
+    // Turn off all PWM LEDs
+    for (int i = 0; i < 4; i++) {
+        ledcWrite(LED_PINS[i], 0);
+    }
     
     // Turn off WS2812 LEDs
     fill_solid(leds, NUM_LEDS, CRGB::Black);
@@ -333,8 +452,11 @@ void enterAutoMode() {
 void updateAutoMode() {
     unsigned long currentTime = millis();
     
-    // Check if it's time to change modes (every 60 seconds)
-    if (currentTime - lastAutoModeChange > 60000) {
+    // Random mode change interval: 30 seconds to 3 minutes (30000-180000 ms)
+    static unsigned long nextModeChangeInterval = random(30000, 180001);
+    
+    // Check if it's time to change modes
+    if (currentTime - lastAutoModeChange > nextModeChangeInterval) {
         // Exit current auto mode
         if (MODES[currentAutoMode].exitFunction) {
             MODES[currentAutoMode].exitFunction();
@@ -351,6 +473,9 @@ void updateAutoMode() {
         }
         
         lastAutoModeChange = currentTime;
+        
+        // Set new random interval for next mode change
+        nextModeChangeInterval = random(30000, 180001);
         
         Serial.print("Auto mode switched to: ");
         Serial.println(MODES[currentAutoMode].name);
