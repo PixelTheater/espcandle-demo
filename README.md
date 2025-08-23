@@ -36,15 +36,7 @@ This project supports both standalone Arduino firmware and Home Assistant integr
   - PCB headers
 - **Extra Pads**: I2C and 5V power injection points
 
-## PCB Pinout & Features
-
-### LED Outputs
-
-- **4x PWM LED Channels** (GPIO15-18): Individual control for specialized LEDs
-  - 2x Bright White LEDs (GPIO15, GPIO16): 2700K warm white, 0.5W at 150mA, 20,000 mcd
-  - 2x Deep Red LEDs (GPIO17, GPIO18): 620nm wavelength, 730 mcd
-- **1x UV LED** (GPIO17): 365nm wavelength, 500mA at 4V  
-- **WS2812 RGB Strip** (GPIO33): 20 addressable RGB LEDs (2020 package) for color effects
+## PCB Pinout & Connectivity
 
 ### GPIO Pinout Summary
 
@@ -56,7 +48,7 @@ This project supports both standalone Arduino firmware and Home Assistant integr
 | 10-12 | Extra GPIO | Available as digital outputs/inputs |
 | 15 | PWM LED 1 | Bright White LED (2700K, 0.5W at 150mA) |
 | 16 | PWM LED 2 | Bright White LED (2700K, 0.5W at 150mA) |
-| 17 | PWM LED 3 | Deep Red LED (620nm, 730 mcd) OR UV LED (365nm) |
+| 17 | PWM LED 3 | UV LED (365nm) |
 | 18 | PWM LED 4 | Deep Red LED (620nm, 730 mcd) |
 | 33 | WS2812 | RGB LED strip data (20x 2020 LEDs) |
 
@@ -65,15 +57,15 @@ This project supports both standalone Arduino firmware and Home Assistant integr
 - **I2C Bus** (GPIO8/9): For sensors and expansion modules
 - **Internal Temperature Sensor**: Monitor ESP32 core temperature
 - **Extra GPIO Pins** (GPIO10-12): Configurable digital I/O
-- **WiFi Connectivity**: For Home Assistant integration
+- **WiFi Connectivity**: For Home Assistant integration, ESPNow, etc.
 
 ## Software Options
 
 Choose between two firmware approaches based on your needs:
 
-### Option 1: Arduino Demo Firmware
+### Option 1: PlatformIO Demo (standalone) Firmware
 
-A standalone firmware with built-in lighting modes and button control.
+A standalone firmware with built-in lighting modes and button control, build with PlatformIO. For an Arduino build (.ino) please [file an issue](https://github.com/PixelTheater/espcandle-demo/issues/new) and I'll try to help out.
 
 #### Features
 
@@ -90,7 +82,7 @@ A standalone firmware with built-in lighting modes and button control.
 
 #### Installation
 
-1. Install PlatformIO in your IDE
+1. Install PlatformIO (in VSCode or use the command line tools)
 2. Clone this repository
 3. Open the project in PlatformIO
 4. Build and upload to your ESP32-S3 board:
@@ -105,6 +97,15 @@ The demo firmware is pre-configured for the PCB pinout. Key settings in `src/mai
 - PWM frequency: 5kHz, 8-bit resolution
 - Max brightness: 30% (safety limit)
 - WS2812: 25% brightness, 20 LEDs
+
+The "boot" button will cycle through the modes. There are four modes:
+
+- Candle: Realistic flickering using warm white and red LEDs
+- Color: Slowly rotating rainbow patterns on RGB strip
+- Magic: Green-to-purple transitions with UV LEDs active
+- Auto: Automatically cycles through all modes over time.
+
+The "EN" button will reset the device.
 
 ### Option 2: ESPHome Integration
 
