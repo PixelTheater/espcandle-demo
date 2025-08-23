@@ -24,6 +24,8 @@ This project supports both standalone Arduino firmware and Home Assistant integr
 - **1x UV LED**: 365nm wavelength, 500mA at 4V
 - **20x RGB WS2812 LEDs**: 2020 package addressable LEDs
 
+![LED Configuration](./media/Candle%20LEDs%20and%20Features.jpg)
+
 ### Connectivity & Power
 
 - **USB-C Interface**: Power and firmware upload
