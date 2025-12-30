@@ -8,6 +8,8 @@ A tea candle-sized LED-powered smart light. The PCB stack is 38.6mm in diameter 
 
 This project supports both standalone Arduino firmware and Home Assistant integration via ESPHome.
 
+> **HOW TO ORDER**: We will have a limited run of pre-assembled candles ready for shipment in **Jan 2026**, you can order here: https://www.soliddifference.com/store - shipped with love from Switzerland
+
 ## Hardware Specifications
 
 ### Core Features
