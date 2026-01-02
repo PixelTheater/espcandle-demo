@@ -36,6 +36,7 @@ light:
     num_leds: 20
     rgb_order: GRB
     name: "RGB LED Strip"
+    restore_mode: RESTORE_DEFAULT_OFF
     effects: 
     - addressable_rainbow: {}
     - addressable_rainbow: 
@@ -64,6 +65,7 @@ light:
   - platform: monochromatic
     output: pwm_led_1
     name: "Warm White LED 1"
+    restore_mode: RESTORE_DEFAULT_ON
     effects:
       - flicker:
       - flicker:
@@ -77,6 +79,7 @@ light:
   - platform: monochromatic
     output: pwm_led_2
     name: "Warm White LED 2"
+    restore_mode: RESTORE_DEFAULT_ON
     effects:
       - flicker:
       - flicker:
@@ -90,6 +93,7 @@ light:
   - platform: monochromatic
     output: pwm_led_3
     name: "UVA LED"
+    restore_mode: RESTORE_DEFAULT_OFF
     effects:
       - flicker:
       - flicker:
@@ -102,7 +106,8 @@ light:
           update_interval: 10s    
   - platform: monochromatic
     output: pwm_led_4
-    name: "Deep Red LED"    
+    name: "Deep Red LED"  
+    restore_mode: RESTORE_DEFAULT_OFF    
     effects:
       - flicker:
       - flicker:
