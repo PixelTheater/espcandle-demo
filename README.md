@@ -26,6 +26,10 @@ This project supports both standalone Arduino firmware and Home Assistant integr
 - **1x UV LED**: 365nm wavelength, 500mA at 4V
 - **20x RGB WS2812 LEDs**: 2020 package addressable LEDs
 
+### Hardware v1.4
+
+Both white LED channels now use a BCR421 linear constant-current regulator driver with 67-21S/KK7C-H276034Z15 LEDs (2700K, 150mA max, Vf around 3.2V). The **UV channel** uses a PAM2804 driver, 4.7uH inductor and 0.33 ohm Rsense at 300mA. The red LEDs are controlled with a N-channel mosfet (AO3402)PWM circuit, 35ma each. With all channels active, power consumption can reach 1.5w.
+
 ![LED Configuration](./media/Candle%20LEDs%20and%20Features.jpg)
 
 ### Connectivity & Power

@@ -13,8 +13,13 @@ const int BUTTON_PIN = 0;
 // PWM settings
 const double PWM_FREQ = 5000.0;
 const uint8_t PWM_RESOLUTION = 8;
-const int MAX_DUTY = (1 << PWM_RESOLUTION) - 1;
-const int MAX_BRIGHTNESS = (MAX_DUTY * 15) / 100; // 30% max brightness
+const int MAX_DUTY = (1 << PWM_RESOLUTION) - 1; // 255 for 8-bit PWM
+const int MAX_BRIGHTNESS = (MAX_DUTY * 10) / 100; // 10% max brightness (for UV/Red LEDs)
+
+// Candle mode white LED brightness (percentage of MAX_DUTY, 0-100%)
+// This controls how bright the white LEDs are in candle flicker mode
+// Increase this value to make the candle brighter
+const int CANDLE_WHITE_BRIGHTNESS_PERCENT = 100; // 100% of full PWM range
 
 // WS2812 settings
 const int NUM_LEDS = 20; // 20 colored LEDs
@@ -192,7 +197,9 @@ void turnOffAllLEDs() {
 }
 
 void setPWMBrightness(int ledIndex, int brightness) {
-    brightness = constrain(brightness, 0, MAX_BRIGHTNESS);
+    // White LEDs in candle mode can exceed MAX_BRIGHTNESS, others are constrained
+    int maxLimit = (ledIndex == WHITE_LED_1 || ledIndex == WHITE_LED_2) ? MAX_DUTY : MAX_BRIGHTNESS;
+    brightness = constrain(brightness, 0, maxLimit);
     ledcWrite(LED_PINS[ledIndex], brightness);
 }
 
@@ -206,9 +213,11 @@ void enterCandleMode() {
     }
     
     // Initialize calm base brightness levels for candle LEDs only
-    calmBaseBrightness[WHITE_LED_1] = (MAX_BRIGHTNESS * 75) / 100; // 75% of max
-    calmBaseBrightness[WHITE_LED_2] = (MAX_BRIGHTNESS * 72) / 100; // 72% of max (slight variation)
-    calmBaseBrightness[RED_LED] = (MAX_BRIGHTNESS * 35) / 100;     // 35% of max
+    // White LEDs use the dedicated candle brightness setting
+    int candleWhiteMax = (MAX_DUTY * CANDLE_WHITE_BRIGHTNESS_PERCENT) / 100;
+    calmBaseBrightness[WHITE_LED_1] = (candleWhiteMax * 100) / 100; // 75% of candle white max
+    calmBaseBrightness[WHITE_LED_2] = (candleWhiteMax * 100) / 100; // 72% of candle white max (slight variation)
+    calmBaseBrightness[RED_LED] = (MAX_BRIGHTNESS * 55) / 100;     // 35% of max (red stays at lower level)
     // UV_LED stays at 0 (off in candle mode)
     
     // Start with calm state for candle LEDs
