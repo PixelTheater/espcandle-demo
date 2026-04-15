@@ -1,77 +1,147 @@
 #include <Arduino.h>
 #include <FastLED.h>
+#include "config.h"
+#include "types.h"
+#include "cli.h"
 
-// Pin definitions
-const int LED_PINS[4] = {15, 16, 17, 18}; // White, White, UV, Deep Red LEDs
-const int WHITE_LED_1 = 0;    // GPIO15 - Bright White LED 1
-const int WHITE_LED_2 = 1;    // GPIO16 - Bright White LED 2  
-const int UV_LED = 2;         // GPIO17 - UV LED
-const int RED_LED = 3;        // GPIO18 - Deep Red LED
-const int WS2812_PIN = 33;
-const int BUTTON_PIN = 0;
-
-// PWM settings
-const double PWM_FREQ = 5000.0;
-const uint8_t PWM_RESOLUTION = 8;
-const int MAX_DUTY = (1 << PWM_RESOLUTION) - 1; // 255 for 8-bit PWM
-const int MAX_BRIGHTNESS = (MAX_DUTY * 10) / 100; // 10% max brightness (for UV/Red LEDs)
-
-// Candle mode white LED brightness (percentage of MAX_DUTY, 0-100%)
-// This controls how bright the white LEDs are in candle flicker mode
-// Increase this value to make the candle brighter
-const int CANDLE_WHITE_BRIGHTNESS_PERCENT = 100; // 100% of full PWM range
-
-// WS2812 settings
-const int NUM_LEDS = 20; // 20 colored LEDs
+// WS2812 LED array
 CRGB leds[NUM_LEDS];
-
-// Button handling
-const unsigned long LONG_PRESS_TIME = 3000; // 3 seconds
 bool lastButtonState = HIGH;
 unsigned long buttonPressStart = 0;
 bool buttonPressed = false;
 
-// Mode management
-enum CandleMode {
-    CANDLE_MODE,
-    COLOR_MODE,
-    MAGIC_MODE,
-    AUTO_MODE,
-    NUM_MODES
-};
+// Mode management (enum defined in types.h)
 
 CandleMode currentMode = CANDLE_MODE;
 CandleMode lastActiveMode = CANDLE_MODE;
 bool powerOn = true;
 
 // Mode-specific variables
-unsigned long lastFlickerUpdate = 0;
-unsigned long lastColorUpdate = 0;
-unsigned long lastMagicUpdate = 0;
 unsigned long lastAutoModeChange = 0;
-int flickerBrightness[4] = {0, 0, 0, 0}; // For all 4 LEDs
-int targetBrightness[4] = {0, 0, 0, 0};  // Target brightness for smooth transitions
-unsigned long lastCandleDisturbance = 0;
-bool candleIsCalm = true;
-int calmBaseBrightness[4] = {0, 0, 0, 0}; // Base brightness during calm periods
 
-// Color mode variables for smooth transitions
-int currentColorHue = 0;           // Current base hue (0-255)
-unsigned long colorModeStartTime = 0;
-const int COLOR_HISTORY_SIZE = NUM_LEDS + 5; // Extra buffer for smooth blending
-uint8_t colorHistory[COLOR_HISTORY_SIZE];   // Circular buffer of hues
-int colorHistoryIndex = 0;         // Current position in history buffer
-int magicHue = 0;
-bool magicDirection = true; // true = green to purple, false = purple to green
+// ── Candle simulation ────────────────────────────────────────────────────────
+//
+// Three sub-modes (CALM, FLICKER, WIND) cycle according to configured time
+// percentages. Each samples 1D Perlin noise (FastLED inoise8) at a moving
+// time position — smooth by construction, no explicit filter needed for
+// CALM/FLICKER. WIND adds a second slower Perlin layer as a gust envelope.
+//
+// A slow third Perlin axis drives a small W1/W2 split so the two whites are
+// never perfectly synchronised.
+//
+// All parameters live in config.h. No magic numbers here.
+
+enum class FlameSubMode : uint8_t { CALM, FLICKER, WIND };
+
+struct CandleState {
+    // Sub-mode scheduler
+    FlameSubMode subMode     = FlameSubMode::FLICKER;
+    FlameSubMode nextSubMode = FlameSubMode::FLICKER;
+    unsigned long subModeEnd  = 0;   // millis() when current sub-mode ends
+    unsigned long xfadeEnd    = 0;   // millis() when crossfade ends (0 = no xfade)
+
+    // Per-mode Perlin time accumulators (float for sub-ms precision)
+    float tFast  = 0.0f;   // primary noise axis
+    float tFast2 = 0.0f;   // secondary octave axis
+    float tGust  = 0.0f;   // slow wind-gust envelope axis (WIND only)
+    float tW1    = 0.0f;   // W1 independent drift axis
+    float tW2    = 0.0f;   // W2 independent drift axis (started in different noise region)
+
+    // Snuff state — per-channel momentary dip in flicker mode
+    float snuffW1 = 1.0f;  // multiplier: 1.0 = normal, <1 = snuffed
+    float snuffW2 = 1.0f;
+
+    // Smoothed output levels (0.0–1.0 fraction of MAX_DUTY)
+    float outW1  = 0.20f;
+    float outW2  = 0.20f;
+    float outRed = 0.08f;
+
+    unsigned long lastUpdate = 0;
+};
+
+static CandleState candleState;
+
+// Blend two rescaled inoise8 samples into a brightness level for a sub-mode.
+// n1/n2 are already rescaled 0–255; gustVal drives the WIND envelope.
+static float noiseToLevel(FlameSubMode m, uint8_t n1, uint8_t n2, uint8_t gustVal = 128) {
+    switch (m) {
+        case FlameSubMode::CALM: {
+            float n = (n1 * (1.0f - CANDLE_CALM_OCTAVE2) + n2 * CANDLE_CALM_OCTAVE2) / 255.0f;
+            float base = CANDLE_CALM_BRIGHTNESS * (1.0f - CANDLE_CALM_DEPTH);
+            return base + CANDLE_CALM_BRIGHTNESS * CANDLE_CALM_DEPTH * n;
+        }
+        case FlameSubMode::FLICKER: {
+            float n = (n1 * (1.0f - CANDLE_FLICKER_OCTAVE2) + n2 * CANDLE_FLICKER_OCTAVE2) / 255.0f;
+            float base = CANDLE_FLICKER_BRIGHTNESS * (1.0f - CANDLE_FLICKER_DEPTH);
+            return base + CANDLE_FLICKER_BRIGHTNESS * CANDLE_FLICKER_DEPTH * n;
+        }
+        case FlameSubMode::WIND: {
+            float n = (n1 * (1.0f - CANDLE_WIND_OCTAVE2) + n2 * CANDLE_WIND_OCTAVE2) / 255.0f;
+            float gust = gustVal / 255.0f;
+            float envelope = 1.0f - CANDLE_WIND_GUST_DEPTH * (1.0f - gust);
+            float base = CANDLE_WIND_BRIGHTNESS * (1.0f - CANDLE_WIND_DEPTH);
+            return (base + CANDLE_WIND_BRIGHTNESS * CANDLE_WIND_DEPTH * n) * envelope;
+        }
+    }
+    return 0.0f;
+}
+
+// Pick the next sub-mode weighted by the PCT constants.
+static FlameSubMode pickNextSubMode(FlameSubMode current) {
+    // Build weighted table excluding current
+    struct { FlameSubMode m; int w; } table[3] = {
+        { FlameSubMode::CALM,    CANDLE_PCT_CALM    },
+        { FlameSubMode::FLICKER, CANDLE_PCT_FLICKER },
+        { FlameSubMode::WIND,    CANDLE_PCT_WIND    },
+    };
+    int total = 0;
+    for (auto& e : table) if (e.m != current) total += e.w;
+    if (total == 0) return current;
+    int r = random(0, total);
+    int acc = 0;
+    for (auto& e : table) {
+        if (e.m == current) continue;
+        acc += e.w;
+        if (r < acc) return e.m;
+    }
+    return FlameSubMode::FLICKER;
+}
+
+static float smoothingForMode(FlameSubMode m) {
+    switch (m) {
+        case FlameSubMode::CALM:    return CANDLE_CALM_SMOOTHING;
+        case FlameSubMode::FLICKER: return CANDLE_FLICKER_SMOOTHING;
+        case FlameSubMode::WIND:    return CANDLE_WIND_SMOOTHING;
+    }
+    return CANDLE_FLICKER_SMOOTHING;
+}
+
+// Color mode state
+static float         colorHue          = 0.0f;  // 0.0–255.0 hue accumulator
+static float         colorCycleSpeed   = 0.02f; // hue units per ms — drifts over time
+static float         colorSpeedVel     = 0.0f;  // speed random-walk velocity
+static unsigned long lastColorUpdate   = 0;
+const int COLOR_HISTORY_SIZE = NUM_LEDS + 5;
+static uint8_t colorHistory[COLOR_HISTORY_SIZE];
+static int     colorHistoryIndex  = 0;
+static unsigned long lastHistoryPush = 0;
+
+// Magic mode state
+enum class MagicPhase { DRIFT, SPARK };
+struct MagicState {
+    MagicPhase   phase       = MagicPhase::DRIFT;
+    unsigned long phaseEnd   = 0;      // millis() when current phase ends
+    float        driftHue    = 160.0f; // current hue for drift phase (purple/blue range)
+    float        driftSpeed  = 0.01f;  // hue units per ms
+    float        redLevel    = 0.5f;   // red LED brightness 0–1 (relative to max)
+    float        redVel      = 0.0f;   // red drift velocity
+    unsigned long lastUpdate = 0;
+};
+static MagicState magicState;
+
 CandleMode currentAutoMode = CANDLE_MODE;
 
-// Mode structure
-struct ModeConfig {
-    const char* name;
-    void (*updateFunction)();
-    void (*enterFunction)();
-    void (*exitFunction)();
-};
+// ModeConfig struct defined in types.h
 
 // Forward declarations
 void updateCandleMode();
@@ -91,6 +161,7 @@ void turnOffAllLEDs();
 void setPWMBrightness(int pin, int brightness);
 
 // Mode configurations
+extern const ModeConfig MODES[NUM_MODES];
 const ModeConfig MODES[NUM_MODES] = {
     {"Candle", updateCandleMode, enterCandleMode, exitCandleMode},
     {"Color", updateColorMode, enterColorMode, exitColorMode},
@@ -99,89 +170,140 @@ const ModeConfig MODES[NUM_MODES] = {
 };
 
 void setup() {
+    Serial.begin(115200);
+
+    Serial.println("\n=== ESP Candle ===");
+    Serial.printf("Chip: %s  Rev: %d  Cores: %d  CPU: %d MHz\n",
+        ESP.getChipModel(), ESP.getChipRevision(),
+        ESP.getChipCores(), getCpuFrequencyMhz());
+    Serial.printf("Flash: %d KB  Free heap: %d B\n",
+        ESP.getFlashChipSize() / 1024, ESP.getFreeHeap());
+    Serial.printf("PWM freq: %.0f Hz  Resolution: %d-bit  Max duty: %d\n",
+        PWM_FREQ, PWM_RESOLUTION, MAX_DUTY);
+    Serial.printf("WS2812 pin: %d  LEDs: %d\n", WS2812_PIN, NUM_LEDS);
+    Serial.printf("Button pin: %d  Long press: %lums\n", BUTTON_PIN, LONG_PRESS_TIME);
+    Serial.printf("PWM pins - White1: %d  White2: %d  UV: %d  Red: %d\n",
+        LED_PINS[WHITE_LED_1], LED_PINS[WHITE_LED_2], LED_PINS[UV_LED], LED_PINS[RED_LED]);
+    Serial.printf("Brightness limits - white: %d%%  uv: %d%%  red: %d%%\n",
+        BRIGHTNESS_MAX_WHITE, BRIGHTNESS_MAX_UV, BRIGHTNESS_MAX_RED);
+    Serial.println("------------------");
+
     // Initialize button
     pinMode(BUTTON_PIN, INPUT_PULLUP);
-    
+
     // Initialize PWM LEDs
     for (int i = 0; i < 4; i++) {
-        ledcAttach(LED_PINS[i], 5000.0, 8);
+        ledcAttach(LED_PINS[i], PWM_FREQ, PWM_RESOLUTION);
         ledcWrite(LED_PINS[i], 0);
     }
-    
+
     // Initialize WS2812 LEDs
     FastLED.addLeds<WS2812, WS2812_PIN, GRB>(leds, NUM_LEDS);
-    FastLED.setBrightness(64); // 25% brightness for WS2812
-    
+    FastLED.setBrightness(WS2812_BRIGHTNESS);
+
     // Enter initial mode
+    Serial.printf("Starting in mode: %s\n", MODES[currentMode].name);
     if (MODES[currentMode].enterFunction) {
         MODES[currentMode].enterFunction();
     }
-    
-    Serial.begin(115200);
-    Serial.println("ESP32 Candle initialized");
+
+    Serial.println("Ready.");
+    cliBegin();
 }
 
 void loop() {
+    cliUpdate();
     handleButton();
-    
-    if (powerOn && MODES[currentMode].updateFunction) {
+
+    if (!cliTestActive() && powerOn && MODES[currentMode].updateFunction) {
         MODES[currentMode].updateFunction();
     }
-    
+
     FastLED.show(); // Update WS2812 LEDs
-    delay(20); // Small delay for stability
+
+    // Periodic status heartbeat every 30 seconds
+    static unsigned long lastStatusPrint = 0;
+    unsigned long now = millis();
+    if (now - lastStatusPrint >= 30000) {
+        Serial.printf("[STATUS] uptime=%lus  power=%s  mode=%s  heap=%dB  temp=%.1fC\n",
+            now / 1000,
+            powerOn ? "ON" : "OFF",
+            MODES[currentMode].name,
+            ESP.getFreeHeap(),
+            temperatureRead());
+        lastStatusPrint = now;
+    }
+
+    // Yield to background tasks (WiFi stack, watchdog) without a fixed sleep.
+    // Animation timing is driven by millis() deltas — no frame-rate cap needed.
+    yield();
 }
 
 void handleButton() {
     bool buttonState = digitalRead(BUTTON_PIN);
-    
-    // Button press detection
+
+    // Button press detected (falling edge)
     if (lastButtonState == HIGH && buttonState == LOW) {
         buttonPressStart = millis();
         buttonPressed = true;
+        Serial.printf("[BTN] Pressed  (t=%lums)\n", buttonPressStart);
     }
-    
-    // Button release detection
+
+    // Long-press threshold crossed while still held
+    static bool longPressReported = false;
+    if (buttonPressed && buttonState == LOW) {
+        unsigned long heldFor = millis() - buttonPressStart;
+        if (heldFor >= LONG_PRESS_TIME && !longPressReported) {
+            Serial.printf("[BTN] Long-press threshold reached (%lums)\n", heldFor);
+            longPressReported = true;
+        }
+    }
+    if (!buttonPressed) {
+        longPressReported = false;
+    }
+
+    // Button release detected (rising edge)
     if (lastButtonState == LOW && buttonState == HIGH && buttonPressed) {
         unsigned long pressDuration = millis() - buttonPressStart;
         buttonPressed = false;
-        
+
+        Serial.printf("[BTN] Released  duration=%lums  -> %s\n",
+            pressDuration, pressDuration < LONG_PRESS_TIME ? "SHORT" : "LONG");
+
         if (pressDuration < LONG_PRESS_TIME) {
             // Short press - mode change or power on
             if (powerOn) {
-                // Exit current mode
+                CandleMode prevMode = currentMode;
+
                 if (MODES[currentMode].exitFunction) {
                     MODES[currentMode].exitFunction();
                 }
-                
-                // Switch to next mode
+
                 currentMode = (CandleMode)((currentMode + 1) % NUM_MODES);
                 lastActiveMode = currentMode;
-                
-                // Enter new mode
+
                 if (MODES[currentMode].enterFunction) {
                     MODES[currentMode].enterFunction();
                 }
-                
-                Serial.print("Switched to mode: ");
-                Serial.println(MODES[currentMode].name);
+
+                Serial.printf("[MODE] %s -> %s\n",
+                    MODES[prevMode].name, MODES[currentMode].name);
             } else {
-                // Power on and restore last mode
                 powerOn = true;
                 currentMode = lastActiveMode;
                 if (MODES[currentMode].enterFunction) {
                     MODES[currentMode].enterFunction();
                 }
-                Serial.println("Power on");
+                Serial.printf("[PWR] ON  restoring mode: %s\n", MODES[currentMode].name);
             }
         } else {
             // Long press - power off
             powerOn = false;
             turnOffAllLEDs();
-            Serial.println("Power off");
+            Serial.printf("[PWR] OFF  (was in mode: %s)\n", MODES[currentMode].name);
         }
     }
-    
+
     lastButtonState = buttonState;
 }
 
@@ -197,92 +319,167 @@ void turnOffAllLEDs() {
 }
 
 void setPWMBrightness(int ledIndex, int brightness) {
-    // White LEDs in candle mode can exceed MAX_BRIGHTNESS, others are constrained
-    int maxLimit = (ledIndex == WHITE_LED_1 || ledIndex == WHITE_LED_2) ? MAX_DUTY : MAX_BRIGHTNESS;
-    brightness = constrain(brightness, 0, maxLimit);
+    int maxPct = (ledIndex == UV_LED)  ? BRIGHTNESS_MAX_UV
+               : (ledIndex == RED_LED) ? BRIGHTNESS_MAX_RED
+               :                        BRIGHTNESS_MAX_WHITE;
+    brightness = constrain(brightness, 0, dutyFromPercent(maxPct));
     ledcWrite(LED_PINS[ledIndex], brightness);
 }
 
-// Candle Mode Functions
+// ── Candle Mode ───────────────────────────────────────────────────────────────
+
 void enterCandleMode() {
-    // Initialize all LEDs to off first
-    for (int i = 0; i < 4; i++) {
-        flickerBrightness[i] = 0;
-        targetBrightness[i] = 0;
-        calmBaseBrightness[i] = 0;
-    }
-    
-    // Initialize calm base brightness levels for candle LEDs only
-    // White LEDs use the dedicated candle brightness setting
-    int candleWhiteMax = (MAX_DUTY * CANDLE_WHITE_BRIGHTNESS_PERCENT) / 100;
-    calmBaseBrightness[WHITE_LED_1] = (candleWhiteMax * 100) / 100; // 75% of candle white max
-    calmBaseBrightness[WHITE_LED_2] = (candleWhiteMax * 100) / 100; // 72% of candle white max (slight variation)
-    calmBaseBrightness[RED_LED] = (MAX_BRIGHTNESS * 55) / 100;     // 35% of max (red stays at lower level)
-    // UV_LED stays at 0 (off in candle mode)
-    
-    // Start with calm state for candle LEDs
-    flickerBrightness[WHITE_LED_1] = calmBaseBrightness[WHITE_LED_1];
-    flickerBrightness[WHITE_LED_2] = calmBaseBrightness[WHITE_LED_2];
-    flickerBrightness[RED_LED] = calmBaseBrightness[RED_LED];
-    targetBrightness[WHITE_LED_1] = calmBaseBrightness[WHITE_LED_1];
-    targetBrightness[WHITE_LED_2] = calmBaseBrightness[WHITE_LED_2];
-    targetBrightness[RED_LED] = calmBaseBrightness[RED_LED];
-    
-    candleIsCalm = true;
-    lastFlickerUpdate = millis();
-    lastCandleDisturbance = millis();
+    CandleState& s   = candleState;
+    unsigned long now = millis();
+    s.subMode     = FlameSubMode::FLICKER;
+    s.nextSubMode = pickNextSubMode(s.subMode);
+    s.subModeEnd  = now + random(CANDLE_SUBMODE_MIN_MS, CANDLE_SUBMODE_MAX_MS);
+    s.xfadeEnd    = 0;
+    s.tFast       = (float)random(0, 10000);
+    s.tFast2      = (float)random(10000, 30000);
+    s.tGust       = (float)random(0, 10000);
+    s.tW1         = (float)random(0, 10000);
+    s.tW2         = (float)random(20000, 40000);  // well-separated noise region
+    s.snuffW1     = 1.0f;
+    s.snuffW2     = 1.0f;
+    s.outW1       = 0.08f;
+    s.outW2       = 0.08f;
+    s.outRed      = CANDLE_RED_MIN * (float)dutyFromPercent(BRIGHTNESS_MAX_RED) / (float)MAX_DUTY;
+    s.lastUpdate = now;
+    ledcWrite(LED_PINS[UV_LED], 0);
 }
 
 void updateCandleMode() {
-    unsigned long currentTime = millis();
-    
-    // Check for disturbance events (every 3-8 seconds during calm periods)
-    if (candleIsCalm && (currentTime - lastCandleDisturbance > random(3000, 8000))) {
-        candleIsCalm = false;
-        lastCandleDisturbance = currentTime;
+    CandleState&  s   = candleState;
+    unsigned long now = millis();
+    unsigned long dt  = now - s.lastUpdate;
+    if (dt == 0) return;
+    s.lastUpdate = now;
+    float dtf = (float)dt;
+
+    // ── Sub-mode scheduler ────────────────────────────────────────────────────
+    if (now >= s.subModeEnd && s.xfadeEnd == 0) {
+        // Start crossfade to next sub-mode
+        s.nextSubMode = pickNextSubMode(s.subMode);
+        s.xfadeEnd    = now + CANDLE_XFADE_MS;
+        s.subModeEnd  = s.xfadeEnd + random(CANDLE_SUBMODE_MIN_MS, CANDLE_SUBMODE_MAX_MS);
     }
-    
-    // Return to calm after 500-1500ms of disturbance
-    if (!candleIsCalm && (currentTime - lastCandleDisturbance > random(500, 1500))) {
-        candleIsCalm = true;
-        lastCandleDisturbance = currentTime;
+    if (s.xfadeEnd != 0 && now >= s.xfadeEnd) {
+        s.subMode  = s.nextSubMode;
+        s.xfadeEnd = 0;
     }
-    
-    // Update at 60Hz for smooth transitions
-    if (currentTime - lastFlickerUpdate > 16) { // ~60 FPS
-        
-        // Update candle LEDs: WHITE_LED_1, WHITE_LED_2, RED_LED (but NOT UV_LED)
-        int candleLEDs[] = {WHITE_LED_1, WHITE_LED_2, RED_LED};
-        for (int i = 0; i < 3; i++) {
-            int led = candleLEDs[i];
-            
-            if (candleIsCalm) {
-                // Calm period: very gentle variation around base brightness
-                int variation = random(-8, 9); // ±8 brightness units
-                targetBrightness[led] = calmBaseBrightness[led] + variation;
-                targetBrightness[led] = constrain(targetBrightness[led], 
-                                                calmBaseBrightness[led] - 15, 
-                                                calmBaseBrightness[led] + 15);
-            } else {
-                // Disturbance period: more noticeable but still controlled flicker
-                int baseLevel = calmBaseBrightness[led];
-                int flickerRange = baseLevel / 3; // Allow 33% variation from base
-                targetBrightness[led] = random(baseLevel - flickerRange, baseLevel + flickerRange + 1);
-            }
-            
-            // Smooth transition to target (slower during calm, faster during disturbance)
-            int transitionSpeed = candleIsCalm ? 32 : 64; // Slower = more gradual
-            flickerBrightness[led] = lerp8by8(flickerBrightness[led], targetBrightness[led], transitionSpeed);
-            
-            // Apply brightness
-            setPWMBrightness(led, flickerBrightness[led]);
+
+    // ── Advance Perlin time axes ──────────────────────────────────────────────
+    float speed1, speed2;
+    switch (s.subMode) {
+        case FlameSubMode::CALM:
+            speed1 = CANDLE_CALM_SPEED;    speed2 = CANDLE_CALM_SPEED2;    break;
+        case FlameSubMode::FLICKER:
+            speed1 = CANDLE_FLICKER_SPEED; speed2 = CANDLE_FLICKER_SPEED2; break;
+        default:
+            speed1 = CANDLE_WIND_SPEED;    speed2 = CANDLE_WIND_SPEED2;    break;
+    }
+    s.tFast  += speed1 * dtf;
+    s.tFast2 += speed2 * dtf;
+    s.tGust  += CANDLE_WIND_GUST_SPEED * dtf;
+    s.tW1    += CANDLE_W1_SPEED * dtf;
+    s.tW2    += CANDLE_W2_SPEED * dtf;
+
+    // ── Sample noise ──────────────────────────────────────────────────────────
+    // inoise8 clusters around 128 (~64–192 practical range); rescale to 0–255.
+    auto sampleNoise = [](uint32_t t) -> uint8_t {
+        int raw = (int)inoise8(t & 0xFFFF);
+        raw = (raw - 64) * 255 / 128;
+        return (uint8_t)constrain(raw, 0, 255);
+    };
+
+    uint8_t n1       = sampleNoise((uint32_t)s.tFast);
+    uint8_t n2       = sampleNoise((uint32_t)s.tFast2);
+    uint8_t gustVal  = sampleNoise((uint32_t)s.tGust);
+    float   curLevel = noiseToLevel(s.subMode, n1, n2, gustVal);
+
+    // Diagnostic log every 2 seconds
+    static unsigned long lastCandleLog = 0;
+    if (now - lastCandleLog >= 2000) {
+        const char* modeName = (s.subMode == FlameSubMode::CALM)    ? "CALM"    :
+                               (s.subMode == FlameSubMode::FLICKER) ? "FLICKER" : "WIND";
+        float alpha = constrain(smoothingForMode(s.subMode) * dtf, 0.0f, 1.0f);
+        Serial.printf("[CANDLE] mode=%-7s  dt=%3lu  n1=%3d  n2=%3d  gust=%3d  "
+                      "level=%.3f  W1=%.3f  W2=%.3f  red=%.3f  alpha=%.3f\n",
+                      modeName, dt, n1, n2, gustVal, curLevel,
+                      s.outW1, s.outW2, s.outRed, alpha);
+        lastCandleLog = now;
+    }
+
+    // During xfade, blend toward the next sub-mode's noise
+    if (s.xfadeEnd != 0) {
+        float xfadeT = 1.0f - (float)(s.xfadeEnd - now) / (float)CANDLE_XFADE_MS;
+        xfadeT = constrain(xfadeT, 0.0f, 1.0f);
+        float nextLevel = noiseToLevel(s.nextSubMode,
+            sampleNoise((uint32_t)(s.tFast + 7919)),
+            sampleNoise((uint32_t)(s.tFast2 + 5003)),
+            gustVal);
+        curLevel = curLevel + (nextLevel - curLevel) * xfadeT;
+    }
+
+    // ── W1/W2 independent drift ───────────────────────────────────────────────
+    // Each channel has its own slow Perlin axis, so they drift autonomously.
+    // In calm mode the drift is wide; in flicker/wind it is narrow.
+    float splitDepth = (s.subMode == FlameSubMode::CALM)
+                       ? CANDLE_SPLIT_DEPTH
+                       : CANDLE_SPLIT_DEPTH_FLICKER;
+    float w1Noise = sampleNoise((uint32_t)s.tW1) / 255.0f;  // 0–1
+    float w2Noise = sampleNoise((uint32_t)s.tW2) / 255.0f;
+    // Each channel offsets from curLevel in its own direction
+    float targetW1 = curLevel * (1.0f + splitDepth * (w1Noise - 0.5f) * 2.0f);
+    float targetW2 = curLevel * (1.0f + splitDepth * (w2Noise - 0.5f) * 2.0f);
+    targetW1 = constrain(targetW1, 0.0f, 1.0f);
+    targetW2 = constrain(targetW2, 0.0f, 1.0f);
+
+    // ── Snuff events (flicker mode only) ──────────────────────────────────────
+    // A rare random trigger dips one channel toward zero then releases it.
+    // The recovery uses its own faster smoothing so the return is snappy.
+    if (s.subMode == FlameSubMode::FLICKER) {
+        if (s.snuffW1 < 1.0f || random(0, 1000) < CANDLE_SNUFF_CHANCE) {
+            if (s.snuffW1 >= 1.0f) s.snuffW1 = 1.0f - CANDLE_SNUFF_DEPTH;  // trigger dip
+            s.snuffW1 += (1.0f - s.snuffW1) * constrain(CANDLE_SNUFF_RECOVER * dtf, 0.0f, 1.0f);
         }
-        
-        // Ensure UV LED is off in candle mode
-        setPWMBrightness(UV_LED, 0);
-        
-        lastFlickerUpdate = currentTime;
+        if (s.snuffW2 < 1.0f || random(0, 1000) < CANDLE_SNUFF_CHANCE) {
+            if (s.snuffW2 >= 1.0f) s.snuffW2 = 1.0f - CANDLE_SNUFF_DEPTH;
+            s.snuffW2 += (1.0f - s.snuffW2) * constrain(CANDLE_SNUFF_RECOVER * dtf, 0.0f, 1.0f);
+        }
+    } else {
+        s.snuffW1 = 1.0f;
+        s.snuffW2 = 1.0f;
     }
+    targetW1 *= s.snuffW1;
+    targetW2 *= s.snuffW2;
+
+    // ── Red: inverse curve over its own full brightness range ─────────────────
+    // dimness=0 when flame is at peak → red at RED_MIN fraction of its cap.
+    // dimness=1 when flame is near zero → red at RED_MAX fraction of its cap.
+    // Expressed as a fraction of BRIGHTNESS_MAX_RED so the full LED range is used.
+    float peakLevel = (s.subMode == FlameSubMode::CALM)    ? CANDLE_CALM_BRIGHTNESS    :
+                      (s.subMode == FlameSubMode::FLICKER) ? CANDLE_FLICKER_BRIGHTNESS :
+                                                              CANDLE_WIND_BRIGHTNESS;
+    float dimness    = 1.0f - constrain(curLevel / peakLevel, 0.0f, 1.0f);
+    float redOfCap   = CANDLE_RED_MIN +
+                       (CANDLE_RED_MAX - CANDLE_RED_MIN) * powf(dimness, CANDLE_RED_CURVE);
+    // Convert fraction-of-cap to fraction-of-MAX_DUTY
+    float targetRed  = redOfCap * (float)dutyFromPercent(BRIGHTNESS_MAX_RED) / (float)MAX_DUTY;
+
+    // ── Exponential smoothing ─────────────────────────────────────────────────
+    float smoothing = smoothingForMode(s.subMode);
+    float alpha = constrain(smoothing * dtf, 0.0f, 1.0f);
+    s.outW1  += (targetW1  - s.outW1)  * alpha;
+    s.outW2  += (targetW2  - s.outW2)  * alpha;
+    s.outRed += (targetRed - s.outRed) * alpha;
+
+    // ── Write to LEDs ─────────────────────────────────────────────────────────
+    ledcWrite(LED_PINS[WHITE_LED_1], (uint32_t)constrain((int)(s.outW1  * MAX_DUTY), 0, MAX_DUTY));
+    ledcWrite(LED_PINS[WHITE_LED_2], (uint32_t)constrain((int)(s.outW2  * MAX_DUTY), 0, MAX_DUTY));
+    ledcWrite(LED_PINS[RED_LED],     (uint32_t)constrain((int)(s.outRed * MAX_DUTY), 0, MAX_DUTY));
+    ledcWrite(LED_PINS[UV_LED], 0);
 }
 
 void exitCandleMode() {
@@ -292,155 +489,177 @@ void exitCandleMode() {
     }
 }
 
-// Color Mode Functions
+// ── Color Mode ────────────────────────────────────────────────────────────────
+//
+// Hue advances at a speed that does a slow random walk between nearly-static
+// and fast-cycling. The history buffer creates a spatial spread across LEDs.
+
 void enterColorMode() {
-    // Turn off all PWM LEDs (only use WS2812 in color mode)
-    for (int i = 0; i < 4; i++) {
-        ledcWrite(LED_PINS[i], 0);
-    }
-    
-    // Start with a random color each time
-    currentColorHue = random(0, 256);
-    colorModeStartTime = millis();
-    lastColorUpdate = millis();
+    for (int i = 0; i < 4; i++) ledcWrite(LED_PINS[i], 0);
+
+    colorHue         = (float)random(0, 256);
+    colorCycleSpeed  = 0.015f;
+    colorSpeedVel    = 0.0f;
+    lastColorUpdate  = millis();
+    lastHistoryPush  = millis();
     colorHistoryIndex = 0;
-    
-    // Initialize color history buffer with random starting hue
-    for (int i = 0; i < COLOR_HISTORY_SIZE; i++) {
-        colorHistory[i] = currentColorHue; // Start with random color
-    }
+    for (int i = 0; i < COLOR_HISTORY_SIZE; i++)
+        colorHistory[i] = (uint8_t)colorHue;
 }
 
 void updateColorMode() {
-    unsigned long currentTime = millis();
-    
-    // Update every 50ms for smooth transitions (20 FPS)
-    if (currentTime - lastColorUpdate > 50) {
-        // Calculate progression through rainbow over 60 seconds
-        unsigned long elapsedTime = currentTime - colorModeStartTime;
-        float rainbowProgress = (elapsedTime % 120000) / 120000.0; // 0.0 to 1.0 over 120 seconds
-        currentColorHue = (int)(rainbowProgress * 255); // 0 to 255 hue range
-        
-        // Add new hue to history buffer every ~150ms (3 seconds / 20 LEDs)
-        static unsigned long lastHistoryUpdate = 0;
-        if (currentTime - lastHistoryUpdate > 150) {
-            colorHistory[colorHistoryIndex] = currentColorHue;
-            colorHistoryIndex = (colorHistoryIndex + 1) % COLOR_HISTORY_SIZE;
-            lastHistoryUpdate = currentTime;
-        }
-        
-        // Apply colors to LEDs with history-based spacing
-        for (int i = 0; i < NUM_LEDS; i++) {
-            // Calculate which history position this LED should use
-            int historyOffset = i; // Each LED is one step behind the previous
-            int historyPos = (colorHistoryIndex - historyOffset + COLOR_HISTORY_SIZE) % COLOR_HISTORY_SIZE;
-            uint8_t ledHue = colorHistory[historyPos];
-            
-            // Add slight hue variation for more natural look
-            ledHue += random(-3, 4); // ±3 hue variation
-            
-            // Set LED with full saturation and good brightness
-            leds[i] = CHSV(ledHue, 255, 200);
-        }
-        
-        // Apply blur effect to smooth transitions (especially at wraparound)
-        // Blend each LED with its neighbors
-        for (int i = 0; i < NUM_LEDS; i++) {
-            int prevLED = (i - 1 + NUM_LEDS) % NUM_LEDS;
-            int nextLED = (i + 1) % NUM_LEDS;
-            
-            // Blend current LED with 20% of each neighbor
-            CRGB blended = leds[i];
-            blended.nscale8(179); // 70% of original (179/255 ≈ 0.7)
-            
-            CRGB prevColor = leds[prevLED];
-            prevColor.nscale8(38); // 15% of neighbor (38/255 ≈ 0.15)
-            
-            CRGB nextColor = leds[nextLED];
-            nextColor.nscale8(38); // 15% of neighbor
-            
-            leds[i] = blended + prevColor + nextColor;
-        }
-        
-        lastColorUpdate = currentTime;
+    unsigned long now = millis();
+    unsigned long dt  = now - lastColorUpdate;
+    if (dt < 20) return;
+    lastColorUpdate = now;
+    float dtf = (float)dt;
+
+    // ── Speed random walk ─────────────────────────────────────────────────────
+    // Velocity drifts randomly; soft walls pull speed back toward centre.
+    float speedCentre = (COLOR_SPEED_MIN + COLOR_SPEED_MAX) * 0.5f;
+    colorSpeedVel += (((float)random(0, 1000) / 500.0f) - 1.0f) * 0.000003f * dtf;
+    colorSpeedVel *= 0.97f;
+    colorSpeedVel += (speedCentre - colorCycleSpeed) * 0.000008f * dtf;
+    colorCycleSpeed += colorSpeedVel * dtf;
+    colorCycleSpeed = constrain(colorCycleSpeed, COLOR_SPEED_MIN, COLOR_SPEED_MAX);
+
+    // ── Advance hue ───────────────────────────────────────────────────────────
+    colorHue += colorCycleSpeed * dtf;
+    if (colorHue >= 256.0f) colorHue -= 256.0f;
+
+    // Push a new hue into the history ring at a rate proportional to speed,
+    // so spatial spread across the strip scales with how fast things are moving.
+    unsigned long histInterval = (unsigned long)(150.0f / (colorCycleSpeed / 0.015f));
+    histInterval = constrain(histInterval, 30UL, 2000UL);
+    if (now - lastHistoryPush > histInterval) {
+        colorHistory[colorHistoryIndex] = (uint8_t)colorHue;
+        colorHistoryIndex = (colorHistoryIndex + 1) % COLOR_HISTORY_SIZE;
+        lastHistoryPush = now;
+    }
+
+    // ── Apply to LEDs ─────────────────────────────────────────────────────────
+    for (int i = 0; i < NUM_LEDS; i++) {
+        int pos = (colorHistoryIndex - i + COLOR_HISTORY_SIZE) % COLOR_HISTORY_SIZE;
+        uint8_t h = colorHistory[pos] + (uint8_t)random(0, 4);
+        leds[i] = CHSV(h, COLOR_SATURATION, COLOR_BRIGHTNESS);
+    }
+
+    // Spatial blur — softens boundaries between history steps
+    for (int i = 0; i < NUM_LEDS; i++) {
+        int prev = (i - 1 + NUM_LEDS) % NUM_LEDS;
+        int next = (i + 1) % NUM_LEDS;
+        CRGB c = leds[i]; c.nscale8(179);
+        CRGB p = leds[prev]; p.nscale8(38);
+        CRGB n = leds[next]; n.nscale8(38);
+        leds[i] = c + p + n;
     }
 }
 
 void exitColorMode() {
-    // Turn off WS2812 LEDs
     fill_solid(leds, NUM_LEDS, CRGB::Black);
     FastLED.show();
 }
 
-// Magic Mode Functions
+// ── Magic Mode ────────────────────────────────────────────────────────────────
+//
+// Two alternating phases:
+//   DRIFT  – slow hue sweep across all LEDs, low brightness, atmospheric.
+//   SPARK  – dim base with random bright sparks flying across the strip.
+//
+// Red LED drifts independently via a slow sine walk throughout.
+
+static void magicStartPhase(MagicState& m, unsigned long now) {
+    if (m.phase == MagicPhase::DRIFT) {
+        m.phase    = MagicPhase::SPARK;
+        m.phaseEnd = now + random(MAGIC_SPARK_PHASE_MIN, MAGIC_SPARK_PHASE_MAX);
+    } else {
+        m.phase      = MagicPhase::DRIFT;
+        m.phaseEnd   = now + random(MAGIC_DRIFT_PHASE_MIN, MAGIC_DRIFT_PHASE_MAX);
+        m.driftSpeed = MAGIC_DRIFT_SPEED_MIN +
+                       ((float)random(0, 1000) / 1000.0f) *
+                       (MAGIC_DRIFT_SPEED_MAX - MAGIC_DRIFT_SPEED_MIN);
+    }
+}
+
 void enterMagicMode() {
-    // Turn off white LEDs in magic mode
     ledcWrite(LED_PINS[WHITE_LED_1], 0);
     ledcWrite(LED_PINS[WHITE_LED_2], 0);
-    
-    magicHue = 0; // Start at beginning of color range
-    magicDirection = true;
-    lastMagicUpdate = millis();
-    
-    // Turn on UV LED at MAXIMUM brightness (ignore MAX_BRIGHTNESS limit for UV)
-    ledcWrite(LED_PINS[UV_LED], 150); // Full 8-bit PWM for maximum UV output
-    
-    // Turn on deep red LED at reduced brightness (30% less than normal max)
-    int reducedBrightness = (MAX_BRIGHTNESS * 7) / 10; // 70% of max
-    setPWMBrightness(RED_LED, reducedBrightness);
+
+    MagicState& m = magicState;
+    unsigned long now = millis();
+    m.phase      = MagicPhase::DRIFT;
+    m.phaseEnd   = now + random(MAGIC_DRIFT_PHASE_MIN, MAGIC_DRIFT_PHASE_MAX);
+    m.driftHue   = MAGIC_HUE_CENTER + (float)random(0, (int)MAGIC_HUE_SPREAD);
+    m.driftSpeed = (MAGIC_DRIFT_SPEED_MIN + MAGIC_DRIFT_SPEED_MAX) * 0.5f;
+    m.redLevel   = 0.4f;
+    m.redVel     = 0.0f;
+    m.lastUpdate = now;
+
+    fill_solid(leds, NUM_LEDS, CRGB::Black);
+    ledcWrite(LED_PINS[UV_LED], dutyFromPercent(BRIGHTNESS_MAX_UV));
 }
 
 void updateMagicMode() {
-    unsigned long currentTime = millis();
-    
-    // Update at 30 FPS for much smoother transitions
-    if (currentTime - lastMagicUpdate > 33) { // ~30 FPS instead of 10 FPS
-        // Calculate smooth progression over time instead of discrete steps
-        unsigned long elapsedTime = currentTime - lastMagicUpdate;
-        static float smoothHue = 0.0;
-        
-        // Smooth continuous hue progression (slower than before)
-        smoothHue += 0.5; // Much smaller increment for smoother transitions
-        if (smoothHue >= 255.0) {
-            smoothHue = 0.0;
-            magicDirection = !magicDirection; // Switch direction
-        }
-        
-        // Create smoother brightness pulse using floating point
-        float pulsePhase = smoothHue * 2.0 * PI / 255.0; // Convert to radians
-        uint8_t baseBrightness = (uint8_t)((sin(pulsePhase) * 0.5 + 0.5) * 150); // Smooth sine wave 0-150
-        
+    MagicState&   m   = magicState;
+    unsigned long now = millis();
+    unsigned long dt  = now - m.lastUpdate;
+    if (dt == 0) return;
+    m.lastUpdate = now;
+    float dtf = (float)dt;
+
+    // ── Phase transitions ─────────────────────────────────────────────────────
+    if (now >= m.phaseEnd) magicStartPhase(m, now);
+
+    // ── Red LED — slow sine drift independent of phase ────────────────────────
+    // Very slow drift — step is small, damping is heavy, centre pull is gentle.
+    // Full range traversal takes on the order of minutes, not seconds.
+    m.redVel += (((float)random(0, 1000) / 500.0f) - 1.0f) * MAGIC_RED_STEP * dtf;
+    m.redVel *= MAGIC_RED_DAMPING;
+    m.redVel += (MAGIC_RED_CENTRE - m.redLevel) * MAGIC_RED_PULL * dtf;
+    m.redLevel += m.redVel * dtf;
+    m.redLevel = constrain(m.redLevel, MAGIC_RED_MIN, MAGIC_RED_MAX);
+    ledcWrite(LED_PINS[RED_LED],
+        (uint32_t)(m.redLevel * (float)dutyFromPercent(BRIGHTNESS_MAX_RED)));
+
+    // ── RGB strip ─────────────────────────────────────────────────────────────
+    if (m.phase == MagicPhase::DRIFT) {
+        // Advance hue slowly
+        m.driftHue += m.driftSpeed * dtf;
+        if (m.driftHue >= 256.0f) m.driftHue -= 256.0f;
+
+        // All LEDs get similar hue with a gentle per-position sine ripple
         for (int i = 0; i < NUM_LEDS; i++) {
-            float hueFloat;
-            if (magicDirection) {
-                // Deep purple to dark blue-green (hue range: 192 to 128)
-                hueFloat = 192.0 - (smoothHue * 64.0 / 255.0);
-            } else {
-                // Dark blue-green to deep purple (hue range: 128 to 192)  
-                hueFloat = 128.0 + (smoothHue * 64.0 / 255.0);
-            }
-            
-            // Add subtle per-LED variation for more organic look
-            float ledHueVariation = sin((float)i * 0.3 + smoothHue * 0.02) * 2.0;
-            uint8_t finalHue = (uint8_t)(hueFloat + ledHueVariation);
-            
-            // Slight brightness variation per LED
-            uint8_t ledBrightness = baseBrightness + (uint8_t)(sin((float)i * 0.5 + smoothHue * 0.03) * 10);
-            
-            leds[i] = CHSV(finalHue, 255, ledBrightness);
+            float ripple = sinf((float)i * 0.45f + m.driftHue * 0.025f) * 6.0f;
+            uint8_t h = (uint8_t)(m.driftHue + ripple);
+            uint8_t v = MAGIC_DRIFT_BRIGHTNESS +
+                        (uint8_t)(sinf((float)i * 0.3f + m.driftHue * 0.018f) * MAGIC_DRIFT_RIPPLE);
+            leds[i] = CHSV(h, 230, v);
         }
-        
-        lastMagicUpdate = currentTime;
+
+    } else {
+        // SPARK phase — dim base fades down, occasional sparks shoot along strip
+        // Fade all LEDs toward a very dim base colour
+        for (int i = 0; i < NUM_LEDS; i++) {
+            leds[i].nscale8(MAGIC_SPARK_FADE);
+            CRGB tint = CHSV((uint8_t)m.driftHue, 220, MAGIC_SPARK_TINT_V);
+            leds[i] += tint;
+        }
+
+        if (random(0, 100) < MAGIC_SPARK_CHANCE) {
+            int pos = random(0, NUM_LEDS);
+            uint8_t sparkHue = (uint8_t)(m.driftHue + random(0, MAGIC_SPARK_HUE_SPREAD * 2) - MAGIC_SPARK_HUE_SPREAD);
+            leds[pos] = CHSV(sparkHue, 200,
+                MAGIC_SPARK_BRIGHTNESS_MIN + random(0, MAGIC_SPARK_BRIGHTNESS_MAX - MAGIC_SPARK_BRIGHTNESS_MIN));
+        }
+
+        // Advance driftHue slowly even in spark phase so colours evolve
+        m.driftHue += 0.004f * dtf;
+        if (m.driftHue >= 256.0f) m.driftHue -= 256.0f;
     }
 }
 
 void exitMagicMode() {
-    // Turn off all PWM LEDs
-    for (int i = 0; i < 4; i++) {
-        ledcWrite(LED_PINS[i], 0);
-    }
-    
-    // Turn off WS2812 LEDs
+    for (int i = 0; i < 4; i++) ledcWrite(LED_PINS[i], 0);
     fill_solid(leds, NUM_LEDS, CRGB::Black);
     FastLED.show();
 }
@@ -449,13 +668,12 @@ void exitMagicMode() {
 void enterAutoMode() {
     currentAutoMode = CANDLE_MODE;
     lastAutoModeChange = millis();
-    
-    // Enter the first auto mode
+
     if (MODES[currentAutoMode].enterFunction) {
         MODES[currentAutoMode].enterFunction();
     }
-    
-    Serial.println("Auto mode started - Candle");
+
+    Serial.printf("[AUTO] Started - first sub-mode: %s\n", MODES[currentAutoMode].name);
 }
 
 void updateAutoMode() {
@@ -482,12 +700,12 @@ void updateAutoMode() {
         }
         
         lastAutoModeChange = currentTime;
-        
+
         // Set new random interval for next mode change
         nextModeChangeInterval = random(30000, 180001);
-        
-        Serial.print("Auto mode switched to: ");
-        Serial.println(MODES[currentAutoMode].name);
+
+        Serial.printf("[AUTO] -> %s  (next change in ~%lus)\n",
+            MODES[currentAutoMode].name, nextModeChangeInterval / 1000);
     }
     
     // Update the current auto mode
