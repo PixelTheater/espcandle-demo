@@ -123,91 +123,123 @@ Full Home Assistant integration with advanced lighting effects and remote contro
 
 - **Individual LED Control**: Each LED controllable separately
 - **Advanced Effects**: Flicker, rainbow, color wipe, twinkle, and random patterns
-- **Home Assistant Integration**: Full automation and scene support
-- **OTA Updates**: Wireless firmware updates
-- **Temperature Monitoring**: ESP32 internal temperature sensor
-- **Extra GPIO Control**: Digital switches for expansion
+- **Home Assistant Integration**: auto-discovery via the native API, OTA updates, automation, scenes
+- **Web provisioning**: first-time Wi-Fi setup over USB (improv-serial) or BLE (esp32_improv), no YAML editing
+- **Captive portal fallback**: if Wi-Fi is lost the candle re-opens its setup AP
+- **Temperature monitoring**, WiFi signal, uptime, IP/MAC diagnostics
+- **Extra GPIO Control**: 3 digital switches for expansion
 
-#### Quick Installation (Single Device)
+#### How the firmware is structured
 
-1. **Install ESPHome**: Follow the [ESPHome installation guide](https://esphome.io/guides/installing_esphome.html)
+Three ESPHome files in this repo:
 
-2. **Create secrets file**:
+- `esphome/espcandle.base.yaml` - the shared base. All hardware, provisioning, lights, switches, sensors, and diagnostics. Every candle uses this file unchanged.
+- `esphome/espcandle.example.yaml` - a ~30-line per-device template. Copy once per physical candle, set the name, flash. The only file you maintain per candle.
+- `esphome/secrets-example.yaml` - template for `secrets.yaml`, holding Wi-Fi creds and per-device API keys / OTA passwords.
 
-   ```yaml
-   # esphome/secrets.yaml
-   wifi_ssid: "Your_WiFi_Network"
-   wifi_password: "your_wifi_password"
-   ```
+There are two flashing flows:
 
-3. **Flash initial firmware**:
+1. **Web flasher (planned, for end customers)** - a future `support.soliddifference.com` will host an ESP Web Tools page that flashes a pre-built factory firmware over USB, then uses improv-serial to set Wi-Fi. Adoption in HA negotiates a per-device API encryption key. **Not available yet.**
+2. **Build from this repo (the path you use today)** - install ESPHome, set per-device secrets, flash over USB. Documented below.
 
-   ```bash
-   esphome run esphome/espcandle_01.yaml
-   ```
+#### Build and flash from this repo
 
-4. **Add to Home Assistant**:
-   - Go to Settings → Devices & Services
-   - ESPHome integration should auto-discover the device
-   - Click "Configure" and add the device
+This is the supported path while the web flasher doesn't exist, and the recommended path for anyone running multiple candles or contributing changes.
 
-#### Bulk Installation (Multiple Candles)
-
-For installing multiple candle devices efficiently:
-
-1. **Generate new device configs**:
+1. **Install the ESPHome toolchain into a project venv:**
 
    ```bash
-   # In ESPHome dashboard, click "New Device"
-   # Follow the wizard but CANCEL at the installation step
-   # This generates a new YAML with unique API/OTA keys
+   cd /path/to/espcandle-demo
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r esphome/requirements.txt
    ```
 
-2. **Create device-specific YAML**:
-   - Copy the generated API encryption key and OTA password
-   - Create a new file (e.g., `espcandle_02.yaml`) based on `espcandle_01.yaml`
-   - Update the device name and keys:
-
-   ```yaml
-   esphome:
-     name: esp32-candle-02
-     friendly_name: ESP32-Candle-02
-   
-   api:
-     encryption:
-       key: "NEW_GENERATED_KEY_HERE"
-   
-   ota:
-     - platform: esphome
-       password: "NEW_GENERATED_PASSWORD_HERE"
-   ```
-
-3. **Flash the firmware**:
+2. **Create your `secrets.yaml`:**
 
    ```bash
-   esphome run esphome/espcandle_02.yaml
+   cp esphome/secrets-example.yaml esphome/secrets.yaml
    ```
 
-4. **Add to Home Assistant**:
-   - Device will be auto-discovered
-   - When prompted about existing configuration, select **"Yes"** to overwrite
-   - This allows quick addition without manual reconfiguration
+   Edit `esphome/secrets.yaml` and set:
+   - `wifi_ssid` and `wifi_password` (your home Wi-Fi)
+   - `fallback_ap_password` - generate with `openssl rand -hex 12`
+   - For each candle, an `<name>_api_key` and `<name>_ota_password`. Generate:
 
-#### ESPHome Configuration Details
+     ```bash
+     echo "candle_livingroom_api_key:      \"$(openssl rand -base64 32)\""
+     echo "candle_livingroom_ota_password: \"$(openssl rand -hex 16)\""
+     ```
 
-The ESPHome configuration provides:
+   `secrets.yaml` is gitignored.
 
-**Light Entities:**
-- `RGB LED Strip`: 20 addressable LEDs with rainbow, color wipe, and twinkle effects
-- `Warm White LED 1 & 2`: Individual warm white channels with flicker effects
-- `UVA LED`: UV light with safety power limiting
-- `Deep Red LED`: Deep red accent lighting
+3. **Create one per-device YAML per candle:**
 
-**Switch Entities:**
-- `Extra GPIO 10-12`: Configurable digital outputs for expansion
+   ```bash
+   cp esphome/espcandle.example.yaml esphome/candle-livingroom.yaml
+   ```
 
-**Sensor Entities:**
-- `Internal Temperature`: ESP32 core temperature monitoring
+   Edit `name`, `friendly_name`, and the two `!secret` references to match the secret names from step 2.
+
+4. **Validate, then flash over USB-C:**
+
+   ```bash
+   esphome config esphome/candle-livingroom.yaml          # YAML check
+   esphome run esphome/candle-livingroom.yaml             # compile + flash + monitor
+   ```
+
+   The first run downloads ESP-IDF (~5 minutes, cached afterwards). When it asks for a port, pick the `/dev/cu.usbmodem*` entry that appeared when you plugged the candle in.
+
+5. **Watch it join Wi-Fi.** Logs stream over USB. Within ~10 seconds you'll see `WiFi: Connected` and the device's IP. The candle is now reachable as `<name>.local`.
+
+6. **Adopt in Home Assistant.** Settings → Devices & Services. The candle shows up under *Discovered*. Click **Configure**, paste the API encryption key from `secrets.yaml` when prompted, done.
+
+7. **Subsequent updates go OTA**, no USB needed:
+
+   ```bash
+   esphome run esphome/candle-livingroom.yaml
+   ```
+
+   ESPHome auto-detects the candle on the LAN and uses the OTA password from secrets.
+
+8. **Flashing more candles:** repeat steps 3-6 with a new file name (`candle-kitchen.yaml`, etc.) and a new pair of secrets. To bulk-update after editing the base:
+
+   ```bash
+   for f in esphome/candle-*.yaml; do esphome run "$f"; done
+   ```
+
+Per-candle YAMLs other than `espcandle.example.yaml` are gitignored, so private keys never reach version control.
+
+#### What the base config exposes
+
+**Lights** (with `restore_mode: RESTORE_DEFAULT_OFF`, `default_transition_length: 0s` on the strip, `gamma_correct: 1.0`):
+- `RGB LED Strip` - 20 WS2812s with rainbow, color-wipe, and twinkle effects
+- `Warm White 1 & 2` - individual warm-white channels with flicker effects
+- `UV LED` - 365nm channel, power-capped at 50%
+- `Deep Red LED` - deep red accent
+
+**Buttons:** Restart, Factory Reset, Safe Mode (HA-side recovery without USB).
+
+**Switches:** Extra GPIO 10/11/12 with restored state.
+
+**Boot button:** short press toggles the RGB strip, 3-second hold reboots.
+
+**Diagnostics:** internal temperature, uptime, WiFi signal (dB and %), IP/SSID/MAC, ESPHome version, last restart time.
+
+#### Customising hardware for variants
+
+Pin assignments and power caps are exposed as `substitutions:` in `espcandle.base.yaml`. To override one without forking, set it in the per-device YAML before the `packages:` line:
+
+```yaml
+substitutions:
+  name: esp32-candle-prototype
+  friendly_name: Prototype
+  led_pin: GPIO32
+  white_max_power: "50%"
+
+packages:
+  espcandle: !include espcandle.base.yaml
+```
 
 **Available Effects:**
 - Flicker (realistic candle simulation)
@@ -245,9 +277,10 @@ The ESPHome configuration provides:
 
 ### ESPHome Issues
 
-- **Device not discovered**: Check WiFi credentials in secrets.yaml
-- **API connection failed**: Verify encryption key matches between YAML and Home Assistant
-- **OTA update failed**: Ensure device is powered and network is stable
+- **Device not discovered**: confirm the candle joined Wi-Fi - it should show as `esp32-candle-XXXXXX.local` on the network. If it didn't, it will fall back to its setup AP after ~90 seconds; re-run improv-serial from the web flasher or join the AP and use the captive portal.
+- **API connection failed**: by default Home Assistant generates and stores a unique encryption key during adoption. If the device was reflashed, HA's stored key no longer matches and adoption fails - delete the device in HA and let it re-discover so a new key is negotiated. If you pinned a key in your per-device YAML, that value must match what HA has on file.
+- **OTA update failed**: confirm the device is on Wi-Fi. If you set an OTA password, it must match the one used at flash time. Press the candle's **Safe Mode** button in HA, then retry.
+- **Want to start over**: press **Factory Reset** in HA (or hold the boot button for 10s) - the candle wipes Wi-Fi creds and re-enters provisioning mode.
 
 ## Development Notes
 

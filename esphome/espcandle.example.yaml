@@ -1,0 +1,44 @@
+# Per-device ESP Candle config.
+#
+# Copy this file once per physical candle, set the name, and flash:
+#
+#   cp espcandle.example.yaml candle-livingroom.yaml
+#   esphome run candle-livingroom.yaml
+#
+# Per ESPHome's security best practices (https://esphome.io/guides/security_best_practices/)
+# every device gets a unique API encryption key and OTA password, stored
+# in secrets.yaml. Generate them with the helper at the bottom of this
+# file, or:
+#   echo "candle_livingroom_api_key:      \"$(openssl rand -base64 32)\""
+#   echo "candle_livingroom_ota_password: \"$(openssl rand -hex 16)\""
+#
+# All hardware, provisioning, and diagnostics come from the shared base
+# package; do not duplicate them here.
+
+substitutions:
+  name: candle-livingroom
+  friendly_name: Living Room Candle
+  # Optional: Home Assistant area to assign the device to.
+  room: ""
+
+packages:
+  espcandle: !include espcandle.base.yaml
+
+# Wi-Fi credentials (shared across all candles - one entry in secrets.yaml).
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    # Fallback AP password protects setup if Wi-Fi is lost. Required by
+    # ESPHome security best practices.
+    password: !secret fallback_ap_password
+
+# Unique per-device API encryption key.
+api:
+  encryption:
+    key: !secret candle_livingroom_api_key
+
+# Unique per-device OTA password.
+ota:
+  - platform: esphome
+    password: !secret candle_livingroom_ota_password

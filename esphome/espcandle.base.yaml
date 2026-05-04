@@ -1,0 +1,360 @@
+# ESP Candle - shared base configuration.
+#
+# This file defines all hardware, provisioning, and diagnostic entities for
+# the ESP Candle PCB (see project README for hardware details). It is meant
+# to be included as a package from a small per-device YAML, e.g.:
+#
+#   substitutions:
+#     name: esp32-candle-livingroom
+#     friendly_name: Living Room Candle
+#   packages:
+#     espcandle: !include espcandle.base.yaml
+#
+# Or remotely:
+#
+#   packages:
+#     espcandle: github://PixelTheater/espcandle-demo/esphome/espcandle.base.yaml@main
+#
+# Out of the box, a freshly flashed candle:
+#   - comes up as a Wi-Fi AP with a captive portal
+#   - accepts Wi-Fi credentials over USB-CDC (improv-serial) and BLE (esp32_improv)
+#   - is discovered by Home Assistant via the native API once on Wi-Fi
+#   - accepts OTA updates from Home Assistant or the ESPHome CLI
+
+substitutions:
+  name: esp32-candle
+  friendly_name: ESP Candle
+  room: ""
+  device_description: "ESP32-S3 powered smart tea candle (RGB + warm white + UV + deep red)"
+  project_name: "PixelTheater.ESP Candle"
+  project_version: "1.4.0"
+
+  # Logging level: NONE, ERROR, WARN, INFO (default), DEBUG, VERBOSE, VERY_VERBOSE
+  log_level: "INFO"
+  # DNS suffix appended to the hostname so the candle appears as
+  # esp32-candle-XXXXXX.local (or .iot.home.lan, etc.)
+  dns_domain: ".local"
+  # Skip the Wi-Fi scan on reconnect for faster wake-up.
+  wifi_fast_connect: "false"
+
+  # GPIO pinout - override only if you have a hardware variant.
+  led_pin:       GPIO33   # WS2812 data
+  white1_pin:    GPIO15
+  white2_pin:    GPIO16
+  uv_pin:        GPIO17
+  red_pin:       GPIO18
+  i2c_sda_pin:   GPIO8
+  i2c_scl_pin:   GPIO9
+  button_pin:    GPIO0    # boot button
+
+  # Power caps - protect LEDs and the supply.
+  white_max_power: "70%"
+  uv_max_power:    "50%"
+
+  # Persistence: which state lights/switches restore to after a power cut.
+  # Options: ALWAYS_ON, ALWAYS_OFF, RESTORE_DEFAULT_ON, RESTORE_DEFAULT_OFF.
+  light_restore_mode:  RESTORE_DEFAULT_OFF
+  switch_restore_mode: RESTORE_DEFAULT_OFF
+
+  # SNTP configuration.
+  timezone: ""
+  sntp_server_1: "0.pool.ntp.org"
+  sntp_server_2: "1.pool.ntp.org"
+  sntp_server_3: "2.pool.ntp.org"
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+  comment: "${device_description}"
+  area: "${room}"
+  # Append the last 3 bytes of the MAC to the hostname so multiple unflashed
+  # candles do not collide on the network on first boot.
+  name_add_mac_suffix: true
+  min_version: 2025.7.0
+  project:
+    name: "${project_name}"
+    version: "${project_version}"
+
+esp32:
+  board: adafruit_feather_esp32s3
+  framework:
+    type: esp-idf
+
+logger:
+  level: ${log_level}
+
+# Native Home Assistant API.
+#
+# The empty `encryption:` block compiles noise-protocol support into the
+# firmware. Per-device YAMLs MUST set `api.encryption.key` from
+# secrets.yaml (see espcandle.example.yaml) - ESPHome's security best
+# practices require a unique key per device.
+#
+# A future "factory firmware" build for the web flasher can leave the key
+# unset and rely on Home Assistant negotiating one at adoption time;
+# that path is documented separately and is not the default for this repo.
+api:
+  encryption:
+
+# OTA updates. Per-device password is set in the including YAML.
+ota:
+  - platform: esphome
+
+# Wi-Fi: no SSID/password here on purpose.
+#   - First boot: AP comes up, captive portal serves a setup page.
+#   - improv-serial sets credentials over USB-CDC.
+#   - esp32_improv sets credentials over BLE.
+# Once provisioned, credentials are stored in flash and the AP stays off.
+wifi:
+  ap: {}
+  fast_connect: "${wifi_fast_connect}"
+  domain: "${dns_domain}"
+
+captive_portal:
+
+improv_serial:
+
+esp32_improv:
+  authorizer: none
+
+# Local web UI on http://<device>.local for status and manual control.
+web_server:
+  port: 80
+
+mdns:
+  disabled: false
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "${timezone}"
+    servers:
+      - "${sntp_server_1}"
+      - "${sntp_server_2}"
+      - "${sntp_server_3}"
+    on_time_sync:
+      then:
+        - if:
+            condition:
+              lambda: 'return id(device_last_restart).state == "";'
+            then:
+              - text_sensor.template.publish:
+                  id: device_last_restart
+                  state: !lambda 'return id(sntp_time).now().strftime("%a %d %b %Y - %H:%M:%S");'
+
+# -- I2C bus --------------------------------------------------------------
+i2c:
+  sda: ${i2c_sda_pin}
+  scl: ${i2c_scl_pin}
+  scan: true
+
+# -- PWM outputs ----------------------------------------------------------
+output:
+  - platform: ledc
+    pin: ${white1_pin}
+    id: pwm_led_1
+    frequency: "300Hz"
+    max_power: ${white_max_power}
+  - platform: ledc
+    pin: ${white2_pin}
+    id: pwm_led_2
+    frequency: "300Hz"
+    max_power: ${white_max_power}
+  - platform: ledc
+    pin: ${uv_pin}
+    id: pwm_led_3
+    max_power: ${uv_max_power}
+  - platform: ledc
+    pin: ${red_pin}
+    id: pwm_led_4
+
+# -- Lights ---------------------------------------------------------------
+# default_transition_length and gamma_correct settings come from the
+# ESPHome+addressable-LED best practices: pixel-mapped strips look wrong
+# with the defaults (1000ms transitions, 2.8 gamma).
+light:
+  - platform: esp32_rmt_led_strip
+    id: rgb_strip
+    chipset: WS2812
+    rgb_order: GRB
+    pin: ${led_pin}
+    num_leds: 20
+    use_dma: true
+    rmt_symbols: 1024
+    use_psram: false
+    name: "RGB LED Strip"
+    restore_mode: ${light_restore_mode}
+    default_transition_length: 0s
+    gamma_correct: 1.0
+    effects:
+      - addressable_rainbow:
+      - addressable_rainbow:
+          name: Rainbow Slow Wide
+          speed: 3
+          width: 80
+      - addressable_color_wipe:
+      - addressable_color_wipe:
+          name: Magenta Wipe
+          colors:
+            - red: 60%
+              green: 0%
+              blue: 40%
+              num_leds: 5
+            - red: 20%
+              green: 0%
+              blue: 50%
+              num_leds: 4
+          add_led_interval: 1000ms
+          reverse: false
+      - addressable_twinkle:
+      - addressable_twinkle:
+          name: Twinkle Sparse
+          twinkle_probability: 5%
+          progress_interval: 40ms
+
+  - platform: monochromatic
+    id: white_1
+    output: pwm_led_1
+    name: "Warm White 1"
+    restore_mode: ${light_restore_mode}
+    default_transition_length: 250ms
+    effects: &flicker_effects
+      - flicker:
+      - flicker:
+          name: Flicker Strong
+          alpha: 97%
+          intensity: 1.2%
+      - random:
+          name: Random Slow
+          transition_length: 5s
+          update_interval: 10s
+
+  - platform: monochromatic
+    id: white_2
+    output: pwm_led_2
+    name: "Warm White 2"
+    restore_mode: ${light_restore_mode}
+    default_transition_length: 250ms
+    effects: *flicker_effects
+
+  - platform: monochromatic
+    id: uv_led
+    output: pwm_led_3
+    name: "UV LED"
+    restore_mode: ${light_restore_mode}
+    default_transition_length: 250ms
+    effects: *flicker_effects
+
+  - platform: monochromatic
+    id: red_led
+    output: pwm_led_4
+    name: "Deep Red LED"
+    restore_mode: ${light_restore_mode}
+    default_transition_length: 250ms
+    effects: *flicker_effects
+
+# -- Boot button ----------------------------------------------------------
+binary_sensor:
+  - platform: status
+    name: "Status"
+    entity_category: diagnostic
+
+  - platform: gpio
+    pin:
+      number: ${button_pin}
+      mode: INPUT_PULLUP
+      inverted: true
+    name: "Boot Button"
+    id: boot_button
+    entity_category: diagnostic
+    on_multi_click:
+      # Short press: toggle the RGB strip
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 0.2s
+        then:
+          - light.toggle: rgb_strip
+      # Long press (>3s): reboot
+      - timing:
+          - ON for at least 3s
+        then:
+          - button.press: restart_button
+
+# -- Extra GPIOs as switches ---------------------------------------------
+switch:
+  - platform: gpio
+    pin: GPIO10
+    name: "Extra GPIO 10"
+    id: extra_gpio_10
+    restore_mode: ${switch_restore_mode}
+  - platform: gpio
+    pin: GPIO11
+    name: "Extra GPIO 11"
+    id: extra_gpio_11
+    restore_mode: ${switch_restore_mode}
+  - platform: gpio
+    pin: GPIO12
+    name: "Extra GPIO 12"
+    id: extra_gpio_12
+    restore_mode: ${switch_restore_mode}
+
+# -- Buttons (HA-side recovery) ------------------------------------------
+button:
+  - platform: restart
+    name: "Restart"
+    id: restart_button
+    entity_category: config
+  - platform: factory_reset
+    name: "Factory Reset"
+    id: factory_reset_button
+    entity_category: config
+  - platform: safe_mode
+    name: "Safe Mode"
+    entity_category: config
+
+# -- Diagnostics ---------------------------------------------------------
+sensor:
+  - platform: internal_temperature
+    name: "Internal Temperature"
+    entity_category: diagnostic
+
+  - platform: uptime
+    name: "Uptime"
+    id: uptime_sensor
+    entity_category: diagnostic
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_signal_db
+    update_interval: 60s
+    entity_category: diagnostic
+
+  - platform: copy
+    source_id: wifi_signal_db
+    name: "WiFi Signal %"
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "%"
+    entity_category: diagnostic
+    device_class: ""
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+    ssid:
+      name: "Connected SSID"
+      entity_category: diagnostic
+    mac_address:
+      name: "MAC Address"
+      entity_category: diagnostic
+
+  - platform: version
+    name: "ESPHome Version"
+    entity_category: diagnostic
+
+  - platform: template
+    name: "Last Restart"
+    id: device_last_restart
+    entity_category: diagnostic

@@ -2,5 +2,12 @@
 .vscode/
 .DS_Store
 .env/
-esphome/espcandle_0*.yaml
+.venv/
+venv/
+# Per-device ESP Candle YAMLs (everything except the base + example template)
+esphome/*.yaml
+!esphome/espcandle.base.yaml
+!esphome/espcandle.example.yaml
+!esphome/secrets-example.yaml
+esphome/secrets.yaml
 esphome/.esphome/
