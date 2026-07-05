@@ -1,3 +1,10 @@
+---
+title: ESP32 Candle Firmware
+description: Tea-candle-sized ESP32-S3 LED smart light with standalone and ESPHome firmware paths.
+tags: [esphome, platformio, home-assistant, hardware-specs, firmware-installation, troubleshooting, led-lighting]
+lastmod: 2026-07-06
+---
+
 # ESP32 Candle Firmware
 
 ![ESP Candle product sheet](media/ESPCandle-product.jpg)
@@ -22,7 +29,7 @@ This project supports both standalone Arduino firmware and Home Assistant integr
 ### LED Configuration
 
 - **2x Bright White LEDs**: 2700K warm white, 0.5W at 150mA, 20,000 mcd
-- **2x Deep Red LEDs**: 620nm wavelength, 730 mcd  
+- **2x Deep Red LEDs**: 620nm wavelength, 730 mcd
 - **1x UV LED**: 365nm wavelength, 500mA at 4V
 - **20x RGB WS2812 LEDs**: 2020 package addressable LEDs
 
@@ -30,7 +37,7 @@ This project supports both standalone Arduino firmware and Home Assistant integr
 
 Both white LED channels now use a BCR421 linear constant-current regulator driver with 67-21S/KK7C-H276034Z15 LEDs (2700K, 150mA max, Vf around 3.2V). The **UV channel** uses a PAM2804 driver, 4.7uH inductor and 0.33 ohm Rsense at 300mA. The red LEDs are controlled with a N-channel mosfet (AO3402)PWM circuit, 35ma each. With all channels active, power consumption can reach 1.5w.
 
-![LED Configuration](./media/Candle%20LEDs%20and%20Features.jpg)
+![LED Configuration](media/candle-leds-and-features.jpg)
 
 ### Connectivity & Power
 
@@ -71,7 +78,7 @@ Choose between two firmware approaches based on your needs:
 
 ### Option 1: PlatformIO Demo (standalone) Firmware
 
-A standalone firmware with built-in lighting modes and button control, build with PlatformIO. For an Arduino build (.ino) please [file an issue](https://github.com/PixelTheater/espcandle-demo/issues/new) and I'll try to help out.
+A standalone firmware with built-in lighting modes and button control, build with PlatformIO. For an Arduino build (.ino), please open a GitHub issue in this repository and I'll try to help out.
 
 #### Features
 
@@ -288,9 +295,13 @@ packages:
 - **Power Management**: PWM channels have safety limits to prevent LED overcurrent
 - **Timing**: FastLED updates run at ~50Hz for smooth animations
 
+## Release History
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes. The current release tag is [`v0.1.0`](https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.1.0).
+
 ## License
 
-This project is open source. Feel free to modify and adapt for your specific needs.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## Contributing
 
