@@ -10,6 +10,11 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 - Add MIT `LICENSE` file.
 - Add this `CHANGELOG.md` to track releases.
+- Seed the firmware RNG in `setup()` using chip-unique entropy so candle, color, magic, and auto-mode randomness differs across reboots.
+- Gate the `[CANDLE]` diagnostic log in `updateCandleMode()` behind a `CANDLE_DEBUG_LOG` macro (default 0) to keep production builds quiet.
+- Add `dutyToFastLEDBrightness()` helper and use it from `setChannelDuty`, `testRamp`, `testRand`, `testHold`, `testRgbRainbow`, and `testRgbChase` so 0-4095 PWM duty values are scaled correctly to FastLED's 0-255 range and no longer wrap modulo 256.
+- Add a bounds check in `setPWMBrightness()` so out-of-range channel indices are rejected before indexing `LED_PINS[]`.
+- Ignore the audit/agent scratch directory `.pi/` in `.gitignore`.
 
 ### Changed
 
@@ -17,6 +22,13 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 - Rename the LED configuration image asset to `media/candle-leds-and-features.jpg` and update the README reference.
 - Replace the fragile GitHub `issues/new` URL in the README with stable issue-reporting wording.
 - Trim README trailing whitespace.
+- Pin the ESPHome version used by the Makefile to `esphome@2025.7.3` (a real, tested release) instead of the previous `esphome@2026.4` placeholder.
+- Tighten the `esphome/requirements.txt` range to `>=2025.7.0,<2026.0.0` to match the Makefile default and the `min_version` declared in `esphome/espcandle.base.yaml`.
+- Refresh `esphome/secrets-example.yaml` with explicit comments, rotation guidance, and a clear per-device naming convention.
+
+### Removed
+
+- Remove the orphan `esphome/espcandle.yaml` (a leftover from the base/example refactor; not referenced by the README or the Makefile).
 
 ## [0.1.0] - 2026-05-04
 

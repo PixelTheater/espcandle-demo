@@ -3,6 +3,7 @@ title: ESP32 Candle Firmware
 description: Tea-candle-sized ESP32-S3 LED smart light with standalone and ESPHome firmware paths.
 tags: [esphome, platformio, home-assistant, hardware-specs, firmware-installation, troubleshooting, led-lighting]
 lastmod: 2026-07-06
+version: 0.2.0-dev
 ---
 
 # ESP32 Candle Firmware

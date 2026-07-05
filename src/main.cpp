@@ -172,6 +172,12 @@ const ModeConfig MODES[NUM_MODES] = {
 void setup() {
     Serial.begin(115200);
 
+    // Seed the RNG with chip-unique entropy + low-order timing bits so
+    // candle / color / magic / auto-mode randomness is not identical on
+    // every reboot. The Efuse MAC is unique per ESP32-S3; XOR with micros()
+    // adds a small per-boot perturbation for paranoia.
+    randomSeed(ESP.getEfuseMac() ^ (uint32_t)micros());
+
     Serial.println("\n=== ESP Candle ===");
     Serial.printf("Chip: %s  Rev: %d  Cores: %d  CPU: %d MHz\n",
         ESP.getChipModel(), ESP.getChipRevision(),
@@ -319,6 +325,7 @@ void turnOffAllLEDs() {
 }
 
 void setPWMBrightness(int ledIndex, int brightness) {
+    if (ledIndex < 0 || ledIndex >= 4) return;
     int maxPct = (ledIndex == UV_LED)  ? BRIGHTNESS_MAX_UV
                : (ledIndex == RED_LED) ? BRIGHTNESS_MAX_RED
                :                        BRIGHTNESS_MAX_WHITE;
@@ -398,7 +405,9 @@ void updateCandleMode() {
     uint8_t gustVal  = sampleNoise((uint32_t)s.tGust);
     float   curLevel = noiseToLevel(s.subMode, n1, n2, gustVal);
 
-    // Diagnostic log every 2 seconds
+#if CANDLE_DEBUG_LOG
+    // Diagnostic log every 2 seconds; compile-gated to keep candle operation
+    // quiet on production builds. Enable with -DCANDLE_DEBUG_LOG=1.
     static unsigned long lastCandleLog = 0;
     if (now - lastCandleLog >= 2000) {
         const char* modeName = (s.subMode == FlameSubMode::CALM)    ? "CALM"    :
@@ -410,6 +419,7 @@ void updateCandleMode() {
                       s.outW1, s.outW2, s.outRed, alpha);
         lastCandleLog = now;
     }
+#endif
 
     // During xfade, blend toward the next sub-mode's noise
     if (s.xfadeEnd != 0) {

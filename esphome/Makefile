@@ -12,7 +12,7 @@
 #   pipx install --suffix=@2025.7 esphome==2025.7.3
 #   pipx install --suffix=@dev    esphome==dev
 
-ESPHOME ?= esphome@2026.4
+ESPHOME ?= esphome@2025.7.3
 DEVICE  ?= candle-test
 YAML     = $(DEVICE).yaml
 
