@@ -18,13 +18,28 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 ### Changed
 
+- Adopt the 2026 single-firmware, runtime-PSK onboarding path.
+  - `esphome/espcandle.base.yaml`: `api:` now ships with no baked-in
+    key by default; Home Assistant negotiates a per-device Noise PSK
+    at adoption (requires ESPHome >= 2025.10.0). Bumped `min_version`
+    to 2025.10.0 and `project_version` to 1.5.0.
+  - `esphome/espcandle.example.yaml`: rewritten as a per-device named
+    overlay with no secrets; `name_add_mac_suffix: false`.
+  - Added `esphome/espcandle.factory.yaml` (Device Builder import
+    target) and `esphome/espcandle.factory.factory.yaml` (bench-flash
+    binary with `http_request` OTA self-update).
+  - Added `esphome/manifest.json` skeleton (populated at release time).
+  - `esphome/secrets-example.yaml`: repurposed for the dev-only
+    static-key path.
+  - `esphome/Makefile` + `requirements.txt`: bumped ESPHome pin to
+    2025.10.5 and the range to `>=2025.10.0,<2026.0.0`; added
+    `factory`, `factory-run`, `factory-config` targets.
+  - See `docs/adoption-strategy.md` for the full strategy and security
+    model.
 - Add README frontmatter for documentation indexing.
 - Rename the LED configuration image asset to `media/candle-leds-and-features.jpg` and update the README reference.
 - Replace the fragile GitHub `issues/new` URL in the README with stable issue-reporting wording.
 - Trim README trailing whitespace.
-- Pin the ESPHome version used by the Makefile to `esphome@2025.7.3` (a real, tested release) instead of the previous `esphome@2026.4` placeholder.
-- Tighten the `esphome/requirements.txt` range to `>=2025.7.0,<2026.0.0` to match the Makefile default and the `min_version` declared in `esphome/espcandle.base.yaml`.
-- Refresh `esphome/secrets-example.yaml` with explicit comments, rotation guidance, and a clear per-device naming convention.
 
 ### Removed
 
