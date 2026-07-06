@@ -27,7 +27,7 @@ substitutions:
   room: ""
   device_description: "ESP32-S3 powered smart tea candle (RGB + warm white + UV + deep red)"
   project_name: "PixelTheater.ESP Candle"
-  project_version: "1.4.0"
+  project_version: "1.5.0"
 
   # Logging level: NONE, ERROR, WARN, INFO (default), DEBUG, VERBOSE, VERY_VERBOSE
   log_level: "INFO"
@@ -70,7 +70,7 @@ esphome:
   # Append the last 3 bytes of the MAC to the hostname so multiple unflashed
   # candles do not collide on the network on first boot.
   name_add_mac_suffix: true
-  min_version: 2025.7.0
+  min_version: 2025.10.0
   project:
     name: "${project_name}"
     version: "${project_version}"
@@ -85,14 +85,17 @@ logger:
 
 # Native Home Assistant API.
 #
-# The empty `encryption:` block compiles noise-protocol support into the
-# firmware. Per-device YAMLs MUST set `api.encryption.key` from
-# secrets.yaml (see espcandle.example.yaml) - ESPHome's security best
-# practices require a unique key per device.
+# No encryption key is baked into the firmware. The device starts with
+# noise-protocol support compiled in but no PSK; on first connect,
+# Home Assistant generates a per-device Noise PSK, sends it to the
+# device via the noise_encryption_set_key RPC, and the device
+# persists it in flash. Plaintext is disabled after that. This
+# requires ESPHome >= 2025.10.0 and Home Assistant's ESPHome
+# integration with aioesphomeapi >= 2025.10.0.
 #
-# A future "factory firmware" build for the web flasher can leave the key
-# unset and rely on Home Assistant negotiating one at adoption time;
-# that path is documented separately and is not the default for this repo.
+# To opt back into a baked-in static key (dev/CI path), set
+# `api: encryption: key: !secret <name>_api_key` in a per-device
+# YAML. See esphome/secrets-example.yaml.
 api:
   encryption:
 

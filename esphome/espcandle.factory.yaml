@@ -1,0 +1,25 @@
+# ESP Candle - factory firmware (Device Builder import target).
+#
+# This is the config the ESPHome Device Builder imports when a user
+# clicks "Take Control / Adopt" on a discovered candle. It is also the
+# base for the bench-flash image (espcandle.factory.factory.yaml).
+#
+# No secrets are baked in. Wi-Fi is provisioned via Improv (BLE or
+# USB-CDC). The native API starts with no key; Home Assistant
+# negotiates and persists a per-device Noise PSK on first adoption.
+# Requires ESPHome >= 2025.10.0.
+
+substitutions:
+  name: espcandle
+  friendly_name: ESP Candle
+
+packages:
+  espcandle: !include espcandle.base.yaml
+
+# Tell the Device Builder where to import the full config from when
+# adopting this device. This line is intentionally NOT in the base,
+# so dev/example builds (which include the base) do not advertise a
+# key-stripping re-import.
+dashboard_import:
+  package_import_url: github://PixelTheater/espcandle-demo/esphome/espcandle.factory.yaml@main
+  import_full_config: true
