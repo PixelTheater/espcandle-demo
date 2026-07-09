@@ -15,9 +15,22 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 - Add `dutyToFastLEDBrightness()` helper and use it from `setChannelDuty`, `testRamp`, `testRand`, `testHold`, `testRgbRainbow`, and `testRgbChase` so 0-4095 PWM duty values are scaled correctly to FastLED's 0-255 range and no longer wrap modulo 256.
 - Add a bounds check in `setPWMBrightness()` so out-of-range channel indices are rejected before indexing `LED_PINS[]`.
 - Ignore the audit/agent scratch directory `.pi/` in `.gitignore`.
+- Lean ESPHome factory YAML: expose one user-facing `ESP Candle` partition light
+  (RGB strip + warm white 1/2 + UV + deep red) with curated effects
+  (Candle / Color / Magic); mark the five underlying channel lights
+  `internal: true`; hide noisy diagnostics with `disabled_by_default: true`.
+- Boot button: short press cycles effects, long press toggles the candle
+  on/off (uses a `globals` counter + `light.turn_on` lambda because
+  `light.effect.next` requires ESPHome >= 2026.6.0 and this firmware pins
+  the 2025.10/2025.12 line).
+- `docs/modders.md`: I2C, extra GPIO 10/11/12, web server, direct
+  per-channel control, and the static-key dev path.
 
 ### Changed
 
+- Comment out optional `web_server`, `i2c`, extra GPIO switches, SNTP +
+  Last Restart template, and the WiFi Signal % copy sensor from the
+  factory base (kept as commented modder examples; see docs/modders.md).
 - Adopt the 2026 single-firmware, runtime-PSK onboarding path.
   - `esphome/espcandle.base.yaml`: `api:` now ships with no baked-in
     key by default; Home Assistant negotiates a per-device Noise PSK

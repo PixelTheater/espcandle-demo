@@ -20,6 +20,13 @@
 #   - accepts Wi-Fi credentials over USB-CDC (improv-serial) and BLE (esp32_improv)
 #   - is discovered by Home Assistant via the native API once on Wi-Fi
 #   - accepts OTA updates from Home Assistant or the ESPHome CLI
+#
+# Only ONE light is exposed to Home Assistant by default: "ESP Candle", a
+# partition light that joins the addressable RGB strip and the four PWM
+# channels (warm white 1/2, UV, deep red) into a single logical light with
+# curated effects (Candle / Color / Magic). The underlying channel lights
+# are kept internal so they do not clutter the HA UI. Modders who want
+# direct per-channel control should see docs/modders.md.
 
 substitutions:
   name: esp32-candle
@@ -56,12 +63,6 @@ substitutions:
   light_restore_mode:  RESTORE_DEFAULT_OFF
   switch_restore_mode: RESTORE_DEFAULT_OFF
 
-  # SNTP configuration.
-  timezone: ""
-  sntp_server_1: "0.pool.ntp.org"
-  sntp_server_2: "1.pool.ntp.org"
-  sntp_server_3: "2.pool.ntp.org"
-
 esphome:
   name: "${name}"
   friendly_name: "${friendly_name}"
@@ -74,6 +75,16 @@ esphome:
   project:
     name: "${project_name}"
     version: "${project_version}"
+  # Cycles the candle effect on each short button press. The light.effect.next
+  # action (ESPHome >= 2026.6.0) is not available in the 2025.10/2025.12 line
+  # this firmware pins, so we track the index here and apply it via
+  # light.turn_on { effect: <name> }.
+  on_boot:
+    priority: -100
+    then:
+      - globals.set:
+          id: effect_index
+          value: '0'
 
 esp32:
   board: adafruit_feather_esp32s3
@@ -82,6 +93,13 @@ esp32:
 
 logger:
   level: ${log_level}
+
+# Effect-cycle index for the boot button (see on_multi_click). Three effects:
+# Candle(0) / Color(1) / Magic(2).
+globals:
+  - id: effect_index
+    type: int
+    initial_value: '0'
 
 # Native Home Assistant API.
 #
@@ -120,38 +138,19 @@ improv_serial:
 esp32_improv:
   authorizer: none
 
-# Local web UI on http://<device>.local for status and manual control.
-web_server:
-  port: 80
-
 mdns:
   disabled: false
 
-time:
-  - platform: sntp
-    id: sntp_time
-    timezone: "${timezone}"
-    servers:
-      - "${sntp_server_1}"
-      - "${sntp_server_2}"
-      - "${sntp_server_3}"
-    on_time_sync:
-      then:
-        - if:
-            condition:
-              lambda: 'return id(device_last_restart).state == "";'
-            then:
-              - text_sensor.template.publish:
-                  id: device_last_restart
-                  state: !lambda 'return id(sntp_time).now().strftime("%a %d %b %Y - %H:%M:%S");'
+# -- I2C bus (modder/expansion only) ----------------------------------------
+# No I2C devices are configured by default. Uncomment to enable the bus
+# for expansion sensors. See docs/modders.md.
+#
+# i2c:
+#   sda: ${i2c_sda_pin}
+#   scl: ${i2c_scl_pin}
+#   scan: true
 
-# -- I2C bus --------------------------------------------------------------
-i2c:
-  sda: ${i2c_sda_pin}
-  scl: ${i2c_scl_pin}
-  scan: true
-
-# -- PWM outputs ----------------------------------------------------------
+# -- PWM outputs ------------------------------------------------------------
 output:
   - platform: ledc
     pin: ${white1_pin}
@@ -171,10 +170,14 @@ output:
     pin: ${red_pin}
     id: pwm_led_4
 
-# -- Lights ---------------------------------------------------------------
+# -- Lights -----------------------------------------------------------------
 # default_transition_length and gamma_correct settings come from the
 # ESPHome+addressable-LED best practices: pixel-mapped strips look wrong
 # with the defaults (1000ms transitions, 2.8 gamma).
+#
+# The five underlying channel lights are internal: they drive the hardware but
+# are not exposed to Home Assistant. The single visible light is the
+# "ESP Candle" partition below, which joins them into one logical light.
 light:
   - platform: esp32_rmt_led_strip
     id: rgb_strip
@@ -185,82 +188,81 @@ light:
     use_dma: true
     rmt_symbols: 1024
     use_psram: false
-    name: "RGB LED Strip"
+    internal: true
     restore_mode: ${light_restore_mode}
     default_transition_length: 0s
     gamma_correct: 1.0
-    effects:
-      - addressable_rainbow:
-      - addressable_rainbow:
-          name: Rainbow Slow Wide
-          speed: 3
-          width: 80
-      - addressable_color_wipe:
-      - addressable_color_wipe:
-          name: Magenta Wipe
-          colors:
-            - red: 60%
-              green: 0%
-              blue: 40%
-              num_leds: 5
-            - red: 20%
-              green: 0%
-              blue: 50%
-              num_leds: 4
-          add_led_interval: 1000ms
-          reverse: false
-      - addressable_twinkle:
-      - addressable_twinkle:
-          name: Twinkle Sparse
-          twinkle_probability: 5%
-          progress_interval: 40ms
 
   - platform: monochromatic
     id: white_1
     output: pwm_led_1
-    name: "Warm White 1"
+    internal: true
     restore_mode: ${light_restore_mode}
     default_transition_length: 250ms
-    effects: &flicker_effects
-      - flicker:
-      - flicker:
-          name: Flicker Strong
-          alpha: 97%
-          intensity: 1.2%
-      - random:
-          name: Random Slow
-          transition_length: 5s
-          update_interval: 10s
 
   - platform: monochromatic
     id: white_2
     output: pwm_led_2
-    name: "Warm White 2"
+    internal: true
     restore_mode: ${light_restore_mode}
     default_transition_length: 250ms
-    effects: *flicker_effects
 
   - platform: monochromatic
     id: uv_led
     output: pwm_led_3
-    name: "UV LED"
+    internal: true
     restore_mode: ${light_restore_mode}
     default_transition_length: 250ms
-    effects: *flicker_effects
 
   - platform: monochromatic
     id: red_led
     output: pwm_led_4
-    name: "Deep Red LED"
+    internal: true
     restore_mode: ${light_restore_mode}
     default_transition_length: 250ms
-    effects: *flicker_effects
 
-# -- Boot button ----------------------------------------------------------
+  # The single user-facing light. Joins the addressable RGB strip and the
+  # four PWM channels (warm white 1/2, UV, deep red) into one logical light.
+  # Effects are named to mirror the standalone firmware modes (Candle /
+  # Color / Magic). The boot button cycles these effects (short press) and
+  # toggles the light on/off (long press).
+  - platform: partition
+    id: candle_light
+    name: "ESP Candle"
+    restore_mode: ${light_restore_mode}
+    default_transition_length: 0s
+    gamma_correct: 1.0
+    segments:
+      - id: rgb_strip
+        from: 0
+        to: 19
+      - single_light_id: white_1
+      - single_light_id: white_2
+      - single_light_id: red_led
+      - single_light_id: uv_led
+    effects:
+      # Candle - warm flicker across the whites and red, calm base on RGB.
+      - flicker:
+          name: Candle
+          alpha: 95%
+          intensity: 1.5%
+      # Color - slow hue sweep across the RGB strip.
+      - addressable_rainbow:
+          name: Color
+          speed: 3
+          width: 80
+      # Magic - purple/blue twinkle across the strip with UV accent.
+      - addressable_twinkle:
+          name: Magic
+          twinkle_probability: 5%
+          progress_interval: 40ms
+
+# -- Boot button ------------------------------------------------------------
 binary_sensor:
   - platform: status
     name: "Status"
     entity_category: diagnostic
+    disabled_by_default: true
 
   - platform: gpio
     pin:
@@ -270,38 +272,52 @@ binary_sensor:
     name: "Boot Button"
     id: boot_button
     entity_category: diagnostic
+    disabled_by_default: true
     on_multi_click:
-      # Short press: toggle the RGB strip
+      # Short press: cycle to the next effect (Candle -> Color -> Magic -> Candle -> ...)
+      # Uses a globals counter + light.turn_on { effect: ... } because the
+      # light.effect.next action requires ESPHome >= 2026.6.0 and this firmware
+      # pins the 2025.10/2025.12 line.
       - timing:
           - ON for at most 1s
           - OFF for at least 0.2s
         then:
-          - light.toggle: rgb_strip
-      # Long press (>3s): reboot
+          - lambda: |
+              static const char *const effects[] = {"Candle", "Color", "Magic"};
+              constexpr int n = 3;
+              int idx = id(effect_index);
+              idx = (idx + 1) % n;
+              id(effect_index) = idx;
+              id(candle_light).turn_on().set_effect(effects[idx]).perform();
+      # Long press (>3s): toggle the candle on/off
       - timing:
           - ON for at least 3s
         then:
-          - button.press: restart_button
+          - light.toggle: candle_light
 
-# -- Extra GPIOs as switches ---------------------------------------------
-switch:
-  - platform: gpio
-    pin: GPIO10
-    name: "Extra GPIO 10"
-    id: extra_gpio_10
-    restore_mode: ${switch_restore_mode}
-  - platform: gpio
-    pin: GPIO11
-    name: "Extra GPIO 11"
-    id: extra_gpio_11
-    restore_mode: ${switch_restore_mode}
-  - platform: gpio
-    pin: GPIO12
-    name: "Extra GPIO 12"
-    id: extra_gpio_12
-    restore_mode: ${switch_restore_mode}
+# -- Extra GPIOs as switches (modder/expansion only) -----------------------
+# These GPIO10/11/12 pins are exposed as switches for tinkerers. On some
+# ESP32-S3 modules these may be strapping or SPI/flash pins - verify your
+# board before enabling. Commented out by default. See docs/modders.md.
+#
+# switch:
+#   - platform: gpio
+#     pin: GPIO10
+#     name: "Extra GPIO 10"
+#     id: extra_gpio_10
+#     restore_mode: ${switch_restore_mode}
+#   - platform: gpio
+#     pin: GPIO11
+#     name: "Extra GPIO 11"
+#     id: extra_gpio_11
+#     restore_mode: ${switch_restore_mode}
+#   - platform: gpio
+#     pin: GPIO12
+#     name: "Extra GPIO 12"
+#     id: extra_gpio_12
+#     restore_mode: ${switch_restore_mode}
 
-# -- Buttons (HA-side recovery) ------------------------------------------
+# -- Buttons (HA-side recovery) ---------------------------------------------
 button:
   - platform: restart
     name: "Restart"
@@ -315,49 +331,80 @@ button:
     name: "Safe Mode"
     entity_category: config
 
-# -- Diagnostics ---------------------------------------------------------
+# -- Diagnostics ------------------------------------------------------------
+# Sensors report to Home Assistant but the noisy ones are hidden by default
+# to keep the device UI clean. Enable them in HA if needed for support.
 sensor:
   - platform: internal_temperature
     name: "Internal Temperature"
     entity_category: diagnostic
+    disabled_by_default: true
 
   - platform: uptime
     name: "Uptime"
     id: uptime_sensor
     entity_category: diagnostic
+    disabled_by_default: true
 
   - platform: wifi_signal
     name: "WiFi Signal"
     id: wifi_signal_db
     update_interval: 60s
     entity_category: diagnostic
-
-  - platform: copy
-    source_id: wifi_signal_db
-    name: "WiFi Signal %"
-    filters:
-      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
-    unit_of_measurement: "%"
-    entity_category: diagnostic
-    device_class: ""
+    disabled_by_default: true
 
 text_sensor:
   - platform: wifi_info
     ip_address:
       name: "IP Address"
       entity_category: diagnostic
+      disabled_by_default: true
     ssid:
       name: "Connected SSID"
       entity_category: diagnostic
+      disabled_by_default: true
     mac_address:
       name: "MAC Address"
       entity_category: diagnostic
+      disabled_by_default: true
 
   - platform: version
     name: "ESPHome Version"
     entity_category: diagnostic
+    disabled_by_default: true
 
-  - platform: template
-    name: "Last Restart"
-    id: device_last_restart
-    entity_category: diagnostic
+# -- Optional components (modder/expansion) ---------------------------------
+# Uncomment to enable. See docs/modders.md for details and tradeoffs.
+#
+# Local web UI on http://<device>.local for status and manual control.
+# Note: unauthenticated on a trusted LAN by default; add `auth:` for a password.
+#
+# web_server:
+#   port: 80
+#   # auth:
+#   #   username: !secret web_username
+#   #   password: !secret web_password
+#
+# SNTP time sync + "Last Restart" text sensor. Adds a time component and a
+# template automation; not needed for onboarding or light control (HA tracks
+# device availability on its own).
+#
+# time:
+#   - platform: sntp
+#     id: sntp_time
+#     timezone: "${timezone}"
+#     servers:
+#       - "0.pool.ntp.org"
+#       - "1.pool.ntp.org"
+#       - "2.pool.ntp.org"
+#     on_time_sync:
+#       then:
+#         - text_sensor.template.publish:
+#             id: device_last_restart
+#             state: !lambda 'return id(sntp_time).now().strftime("%a %d %b %Y - %H:%M:%S");'
+#
+# text_sensor:
+#   - platform: template
+#     name: "Last Restart"
+#     id: device_last_restart
+#     entity_category: diagnostic

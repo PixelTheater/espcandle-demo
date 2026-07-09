@@ -176,7 +176,7 @@ esphome run esphome/candle-livingroom.yaml
 
 For a fully offline, static-key build (no HA runtime adoption), copy `esphome/secrets-example.yaml` to `esphome/secrets.yaml` and follow the commented usage block at the bottom of that file. This is the dev/CI path only.
 
-**What the base exposes:** `RGB LED Strip` (20 WS2812s), `Warm White 1 & 2`, `UV LED`, `Deep Red LED`; Restart / Factory Reset / Safe Mode buttons; Extra GPIO 10/11/12 switches; diagnostics (internal temperature, uptime, WiFi signal dB/%, IP/SSID/MAC, ESPHome version, last restart time). The boot button short-press toggles the RGB strip; a 3-second hold reboots.
+**What the base exposes:** one user-facing light — **ESP Candle** — which joins the 20-LED RGB strip and the four PWM channels (warm white 1/2, UV, deep red) into a single logical light with effects named **Candle**, **Color**, and **Magic**. Restart / Factory Reset / Safe Mode buttons. A compact diagnostic set (WiFi signal, uptime, internal temperature, IP/SSID/MAC, ESPHome version) — hidden by default to keep the UI clean; enable in HA as needed. The boot button short-press cycles effects; a 3-second hold toggles the candle on/off. The underlying per-channel lights are internal (not exposed). For I2C, extra GPIO 10/11/12, the web server, and direct per-channel control, see [docs/modders.md](docs/modders.md).
 
 **Customising hardware for variants:** pin assignments and power caps are `substitutions:` in `espcandle.base.yaml`. Override them in the per-device YAML before the `packages:` line:
 
