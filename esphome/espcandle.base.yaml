@@ -71,20 +71,14 @@ esphome:
   # Append the last 3 bytes of the MAC to the hostname so multiple unflashed
   # candles do not collide on the network on first boot.
   name_add_mac_suffix: true
-  min_version: 2025.10.0
+  min_version: 2026.6.0
   project:
     name: "${project_name}"
     version: "${project_version}"
-  # Cycles the candle effect on each short button press. The light.effect.next
-  # action (ESPHome >= 2026.6.0) is not available in the 2025.10/2025.12 line
-  # this firmware pins, so we track the index here and apply it via
-  # light.turn_on { effect: <name> }.
-  on_boot:
-    priority: -100
-    then:
-      - globals.set:
-          id: effect_index
-          value: '0'
+  # Custom candle/color/magic effect engine (ported from src/main.cpp).
+  # See esphome/includes/candle_effects.h.
+  includes:
+    - includes/candle_effects.h
 
 esp32:
   board: adafruit_feather_esp32s3
@@ -93,13 +87,6 @@ esp32:
 
 logger:
   level: ${log_level}
-
-# Effect-cycle index for the boot button (see on_multi_click). Three effects:
-# Candle(0) / Color(1) / Magic(2).
-globals:
-  - id: effect_index
-    type: int
-    initial_value: '0'
 
 # Native Home Assistant API.
 #
@@ -241,21 +228,25 @@ light:
       - single_light_id: red_led
       - single_light_id: uv_led
     effects:
-      # Candle - warm flicker across the whites and red, calm base on RGB.
-      - flicker:
+      # Candle - custom Perlin-noise flame simulation across the warm whites
+      # and red ember (ported from the standalone firmware).
+      - addressable_lambda:
           name: Candle
-          alpha: 95%
-          intensity: 1.5%
-      # Color - slow hue sweep across the RGB strip.
-      - addressable_rainbow:
+          update_interval: 50ms
+          lambda: |-
+            espcandle::candle::tick(it, initial_run);
+      # Color - custom HSV drift with speed random-walk and spatial history.
+      - addressable_lambda:
           name: Color
-          speed: 3
-          width: 80
-      # Magic - purple/blue twinkle across the strip with UV accent.
-      - addressable_twinkle:
+          update_interval: 50ms
+          lambda: |-
+            espcandle::color::tick(it, initial_run);
+      # Magic - custom drift/spark phases in purple/blue with UV + red drift.
+      - addressable_lambda:
           name: Magic
-          twinkle_probability: 5%
-          progress_interval: 40ms
+          update_interval: 50ms
+          lambda: |-
+            espcandle::magic::tick(it, initial_run);
 
 # -- Boot button ------------------------------------------------------------
 binary_sensor:
@@ -274,21 +265,14 @@ binary_sensor:
     entity_category: diagnostic
     disabled_by_default: true
     on_multi_click:
-      # Short press: cycle to the next effect (Candle -> Color -> Magic -> Candle -> ...)
-      # Uses a globals counter + light.turn_on { effect: ... } because the
-      # light.effect.next action requires ESPHome >= 2026.6.0 and this firmware
-      # pins the 2025.10/2025.12 line.
+      # Short press: cycle to the next effect (Candle -> Color -> Magic -> ...)
       - timing:
           - ON for at most 1s
           - OFF for at least 0.2s
         then:
-          - lambda: |
-              static const char *const effects[] = {"Candle", "Color", "Magic"};
-              constexpr int n = 3;
-              int idx = id(effect_index);
-              idx = (idx + 1) % n;
-              id(effect_index) = idx;
-              id(candle_light).turn_on().set_effect(effects[idx]).perform();
+          - light.effect.next:
+              id: candle_light
+              include_none: false
       # Long press (>3s): toggle the candle on/off
       - timing:
           - ON for at least 3s

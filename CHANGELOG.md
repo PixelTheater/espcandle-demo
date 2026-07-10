@@ -25,13 +25,24 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
   the 2025.10/2025.12 line).
 - `docs/modders.md`: I2C, extra GPIO 10/11/12, web server, direct
   per-channel control, and the static-key dev path.
+- Custom ESPHome effect engine: port the standalone Candle/Color/Magic
+  algorithms into `esphome/includes/candle_effects.h` (Perlin-noise flame,
+  HSV drift+history, drift/spark+UV) wired as `addressable_lambda`
+  effects on the `ESP Candle` partition light. Self-contained value-noise
+  (no FastLED dependency) since `esp32_rmt_led_strip` is not FastLED-backed.
+- `make smoke-test` Makefile target: validates all four YAMLs and compiles
+  the factory binary (no hardware required). PR gate.
+- `docs/testing.md`: full validation runbook (automated smoke test +
+  on-device flash/provision/adopt/effect checks + known boot-loop risk).
 
 ### Changed
 
-- Comment out optional `web_server`, `i2c`, extra GPIO switches, SNTP +
-  Last Restart template, and the WiFi Signal % copy sensor from the
-  factory base (kept as commented modder examples; see docs/modders.md).
-- Adopt the 2026 single-firmware, runtime-PSK onboarding path.
+- Bump ESPHome pin to `esphome@2026.6.5` (Makefile) and `>=2026.6.0,<2027.0.0`
+  (requirements.txt); `min_version: 2026.6.0` in the base. Unblocks
+  `light.effect.next` for the button.
+- Boot button effect cycling simplified to `light.effect.next` (was a
+  `globals` counter + `light.turn_on` lambda, needed because the action
+  landed in ESPHome 2026.6.0 and the firmware previously pinned 2025.12).
   - `esphome/espcandle.base.yaml`: `api:` now ships with no baked-in
     key by default; Home Assistant negotiates a per-device Noise PSK
     at adoption (requires ESPHome >= 2025.10.0). Bumped `min_version`

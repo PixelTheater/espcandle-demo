@@ -160,11 +160,16 @@ Build the factory image:
 
 ```bash
 cd /path/to/espcandle-demo
-python3 -m venv .venv
+python3.13 -m venv .venv            # Python 3.13, not 3.14
 source .venv/bin/activate
 pip install -r esphome/requirements.txt
-make factory-run          # config + compile + flash + monitor (espcandle.factory.factory.yaml)
+make smoke-test          # config validation + compile, no hardware (PR gate)
+make factory-run         # config + compile + flash + monitor (on-device)
 ```
+
+`make smoke-test` is the no-hardware gate — run it before pushing. For the
+full on-device runbook (provision, adopt, effect checks, known issues) see
+[docs/testing.md](docs/testing.md).
 
 Build a named per-device image (runtime PSK, no secrets):
 
@@ -176,7 +181,7 @@ esphome run esphome/candle-livingroom.yaml
 
 For a fully offline, static-key build (no HA runtime adoption), copy `esphome/secrets-example.yaml` to `esphome/secrets.yaml` and follow the commented usage block at the bottom of that file. This is the dev/CI path only.
 
-**What the base exposes:** one user-facing light — **ESP Candle** — which joins the 20-LED RGB strip and the four PWM channels (warm white 1/2, UV, deep red) into a single logical light with effects named **Candle**, **Color**, and **Magic**. Restart / Factory Reset / Safe Mode buttons. A compact diagnostic set (WiFi signal, uptime, internal temperature, IP/SSID/MAC, ESPHome version) — hidden by default to keep the UI clean; enable in HA as needed. The boot button short-press cycles effects; a 3-second hold toggles the candle on/off. The underlying per-channel lights are internal (not exposed). For I2C, extra GPIO 10/11/12, the web server, and direct per-channel control, see [docs/modders.md](docs/modders.md).
+**What the base exposes:** one user-facing light — **ESP Candle** — which joins the 20-LED RGB strip and the four PWM channels (warm white 1/2, UV, deep red) into a single logical light with **custom effects** named **Candle** (Perlin-noise flame on the warm whites + red ember), **Color** (HSV drift with spatial history), and **Magic** (drift/spark in purple/blue with UV + red drift) — ported from the standalone firmware into `esphome/includes/candle_effects.h`. Restart / Factory Reset / Safe Mode buttons. A compact diagnostic set (WiFi signal, uptime, internal temperature, IP/SSID/MAC, ESPHome version) — hidden by default to keep the UI clean; enable in HA as needed. The boot button short-press cycles effects; a 3-second hold toggles the candle on/off. The underlying per-channel lights are internal (not exposed). For I2C, extra GPIO 10/11/12, the web server, and direct per-channel control, see [docs/modders.md](docs/modders.md).
 
 **Customising hardware for variants:** pin assignments and power caps are `substitutions:` in `espcandle.base.yaml`. Override them in the per-device YAML before the `packages:` line:
 
