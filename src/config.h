@@ -32,6 +32,14 @@ inline constexpr int WS2812_BRIGHTNESS   = 64;  // global FastLED brightness (0â
 // Button
 inline constexpr unsigned long LONG_PRESS_TIME = 3000; // ms
 
+// Diagnostic log inside updateCandleMode(). Set to 1 (or pass
+// -DCANDLE_DEBUG_LOG=1 to the compiler) to enable the per-2s noise
+// level/status print on the serial port; keep at 0 for quiet production
+// builds. Defined as 0 by default; user can override.
+#ifndef CANDLE_DEBUG_LOG
+#define CANDLE_DEBUG_LOG 0
+#endif
+
 // Helper: convert 0â€“100 % to a PWM duty count
 inline constexpr int dutyFromPercent(int pct) {
     return (MAX_DUTY * pct) / 100;

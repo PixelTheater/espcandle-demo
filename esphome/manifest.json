@@ -1,0 +1,6 @@
+{
+  "$schema": "https://esphome.io/manifest.schema.json",
+  "_comment": "Populated at release time by the release script (not yet implemented). The http_request update platform reads 'version', 'url', and optional 'md5'/'sha256'.",
+  "version": "0.0.0",
+  "url": "https://raw.githubusercontent.com/PixelTheater/espcandle-demo/main/esphome/.placeholder"
+}

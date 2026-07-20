@@ -122,6 +122,14 @@ static void replaceInputLine(const char* newLine) {
 
 // ─── PWM / LED helpers ────────────────────────────────────────────────────────
 
+// Scale a 0..MAX_DUTY PWM duty value to the 0..255 range FastLED expects for
+// global brightness. Without this, values above 255 wrap modulo 256, so RGB
+// test ramp/hold/random paths produce flickering instead of smooth output.
+static uint8_t dutyToFastLEDBrightness(int duty) {
+    duty = constrain(duty, 0, MAX_DUTY);
+    return (uint8_t)((int64_t)duty * 255 / MAX_DUTY);
+}
+
 static void setChannelDuty(uint8_t mask, int duty) {
     duty = constrain(duty, 0, MAX_DUTY);
     if (mask & CH_W1)  { ledcWrite(LED_PINS[WHITE_LED_1], duty); savedDuty[WHITE_LED_1] = duty; }
@@ -131,7 +139,7 @@ static void setChannelDuty(uint8_t mask, int duty) {
     if (mask & CH_RGB) {
         fill_solid(leds, NUM_LEDS, currentRgbColor);
         // Scale brightness: duty/255 applied as FastLED global brightness for simplicity
-        FastLED.setBrightness((uint8_t)duty);
+        FastLED.setBrightness(dutyToFastLEDBrightness(duty));
         FastLED.show();
     }
 }
@@ -317,7 +325,7 @@ static void testRamp(uint8_t mask) {
         if (pwmMask) setChannelDuty(pwmMask, v);
         if (doRgb) {
             fill_solid(leds, NUM_LEDS, currentRgbColor);
-            FastLED.setBrightness((uint8_t)v);
+            FastLED.setBrightness(dutyToFastLEDBrightness(v));
             FastLED.show();
         }
         Serial.printf("  up   v=%3d\n", v);
@@ -327,7 +335,7 @@ static void testRamp(uint8_t mask) {
         if (pwmMask) setChannelDuty(pwmMask, v);
         if (doRgb) {
             fill_solid(leds, NUM_LEDS, currentRgbColor);
-            FastLED.setBrightness((uint8_t)v);
+            FastLED.setBrightness(dutyToFastLEDBrightness(v));
             FastLED.show();
         }
         Serial.printf("  down v=%3d\n", v);
@@ -354,7 +362,7 @@ static void testRand(uint8_t mask) {
         if (pwmMask) setChannelDuty(pwmMask, v);
         if (doRgb) {
             fill_solid(leds, NUM_LEDS, currentRgbColor);
-            FastLED.setBrightness((uint8_t)v);
+            FastLED.setBrightness(dutyToFastLEDBrightness(v));
             FastLED.show();
         }
         Serial.printf("  v=%3d\n", v);
@@ -379,7 +387,7 @@ static void testHold(int duty, uint8_t mask) {
     }
     if (doRgb) {
         fill_solid(leds, NUM_LEDS, currentRgbColor);
-        FastLED.setBrightness((uint8_t)duty);
+        FastLED.setBrightness(dutyToFastLEDBrightness(duty));
         FastLED.show();
     }
     Serial.printf("[HOLD] duty=%d  ch=", duty);
@@ -397,7 +405,7 @@ static void testRgbRainbow() {
     Serial.println("[RGB RAINBOW] 10 s");
     unsigned long end = millis() + 10000;
     uint8_t hue = 0;
-    FastLED.setBrightness((uint8_t)testMaxBrightness);
+    FastLED.setBrightness(dutyToFastLEDBrightness(testMaxBrightness));
     while (millis() < end) {
         for (int i = 0; i < NUM_LEDS; i++) {
             leds[i] = CHSV((uint8_t)(hue + i * (255 / NUM_LEDS)), 255, 255);
@@ -416,7 +424,7 @@ static void testRgbRainbow() {
 static void testRgbChase() {
     const int LAPS = 5;
     Serial.printf("[RGB CHASE] %d laps\n", LAPS);
-    FastLED.setBrightness((uint8_t)testMaxBrightness);
+    FastLED.setBrightness(dutyToFastLEDBrightness(testMaxBrightness));
     for (int lap = 0; lap < LAPS; lap++) {
         for (int i = 0; i < NUM_LEDS; i++) {
             fill_solid(leds, NUM_LEDS, CRGB::Black);

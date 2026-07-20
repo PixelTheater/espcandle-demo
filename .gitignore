@@ -4,10 +4,13 @@
 .env/
 .venv/
 venv/
+.pi/
 # Per-device ESP Candle YAMLs (everything except the base + example template)
 esphome/*.yaml
 !esphome/espcandle.base.yaml
 !esphome/espcandle.example.yaml
+!esphome/espcandle.factory.yaml
+!esphome/espcandle.factory.factory.yaml
 !esphome/secrets-example.yaml
 esphome/secrets.yaml
 esphome/.esphome/
