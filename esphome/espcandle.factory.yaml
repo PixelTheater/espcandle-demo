@@ -7,7 +7,7 @@
 # No secrets are baked in. Wi-Fi is provisioned via Improv (BLE or
 # USB-CDC). The native API starts with no key; Home Assistant
 # negotiates and persists a per-device Noise PSK on first adoption.
-# Requires ESPHome >= 2025.10.0.
+# Requires ESPHome >= 2026.6.0 (base min_version; runtime PSK needs >= 2025.10.0).
 
 substitutions:
   name: espcandle

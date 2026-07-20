@@ -2,7 +2,7 @@
 
 This document covers the optional hardware features of the ESP Candle PCB that are **not** enabled in the factory firmware by default: the I2C bus, the extra GPIO switches, the local web server, and SNTP/Last-Restart. These are aimed at tinkerers and modders who fork the YAML.
 
-The factory firmware (`esphome/espcandle.factory.factory.yaml`) intentionally exposes a single user-facing light ("ESP Candle") and a minimal diagnostic set. Everything below is opt-in.
+The factory firmware (`esphome/espcandle.factory.factory.yaml`) exposes one light ("ESP Candle"), a Preset select, channel level numbers, and a small diagnostic set. Everything below is opt-in.
 
 ## Where things live
 
@@ -12,7 +12,7 @@ The factory firmware (`esphome/espcandle.factory.factory.yaml`) intentionally ex
 | Extra GPIO 10/11/12 switches | Commented out | Uncomment the `switch:` block in `espcandle.base.yaml` |
 | Local web server | Commented out | Uncomment the `web_server:` block at the bottom of `espcandle.base.yaml` |
 | SNTP + Last Restart | Commented out | Uncomment the `time:` + `text_sensor:` template blocks |
-| Direct per-channel light control | Internal (hidden) | Remove `internal: true` from the channel lights |
+| Separate HA lights per PWM channel | Numbers only | Add monochromatic lights on `pwm_led_*` in a fork (see below) |
 | Static API key / OTA password | Not used (runtime PSK) | See `esphome/secrets-example.yaml` |
 
 ## I2C bus
@@ -32,7 +32,7 @@ After enabling, add sensors under `sensor:` (e.g. `bme280`, `sht3x`, `tsl2561`).
 
 Three GPIO pins are exposed as controllable switches in the default config (commented out). These are intended for expansion modules, fans, or external indicators.
 
-> **⚠️ Pin-safety note.** On some ESP32-S3 modules, GPIO10-12 are connected to the SPI flash interface. Driving them as outputs can conflict with flash access on those modules. Verify your specific module's datasheet before enabling. The ESP32-S3-DevKitC-N8R2 (the candle's reference board) exposes these as safe GPIO, but OEM modules vary.
+> **⚠️ Pin-safety note.** On some ESP32-S3 modules, GPIO10-12 are connected to the SPI flash interface. Driving them as outputs can conflict with flash access on those modules. Verify your specific module's datasheet before enabling. The candle uses an ESP32-S3-N4R2-class module (4MB flash, 2MB quad PSRAM); on the Espressif DevKitC-1-N4R2 these pins are free GPIO, but OEM modules vary.
 
 ```yaml
 switch:
@@ -69,16 +69,11 @@ By default the web server is unauthenticated (trusted-LAN model). If you enable 
 
 ## Direct per-channel control
 
-The factory firmware marks the five physical channel lights `internal: true` so they drive the hardware but don't appear in Home Assistant. Only the `ESP Candle` partition light is exposed.
+The factory firmware exposes one light (`ESP Candle` = RGB strip) plus a **Preset** select and three config numbers (**White Brightness**, **Red Intensity**, **UV Intensity**). PWM channels are driven via `ledc.set_level()` — there is no partition light and no monochromatic channel lights.
 
-If you want direct per-channel control (e.g. for a custom dashboard or to drive the whites and RGB independently), remove `internal: true` from any of:
+For day-to-day use, pick a Preset or move the channel sliders (sliders switch Preset to **Custom**). Effects Candle / Color / Magic own PWM while they run.
 
-- `rgb_strip` — the 20-LED WS2812 strip
-- `white_1`, `white_2` — warm white channels
-- `uv_led` — 365nm UV
-- `red_led` — deep red
-
-You may also want to add `name:` back to each so they appear with friendly names in HA.
+If you want separate HA light tiles per channel instead of numbers, add monochromatic lights on `pwm_led_1`…`pwm_led_4` in a forked YAML. Do not also drive those outputs from effects/`set_level` without coordination — two writers on the same LEDC channel fight each other (that is why the factory build dropped the partition model).
 
 ## SNTP time sync + Last Restart
 

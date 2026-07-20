@@ -2,7 +2,7 @@
 title: ESP32 Candle Firmware
 description: Tea-candle-sized ESP32-S3 LED smart light with standalone and ESPHome firmware paths.
 tags: [esphome, platformio, home-assistant, hardware-specs, firmware-installation, troubleshooting, led-lighting]
-lastmod: 2026-07-06
+lastmod: 2026-07-20
 version: 0.2.0-dev
 ---
 
@@ -12,17 +12,17 @@ version: 0.2.0-dev
 
 ![ESP Candle flicker demo in a glass cup](media/espcandle-1-3.gif)
 
-A tea candle-sized LED-powered smart light. The PCB stack is 38.6mm in diameter and 2cm tall, so that it can be placed in a standard candle holder or lantern (which are normally >40mm round spaces). It features RGB, a very bright warm white LED, and two UV LEDs. It can be powered by USB-C or via 6-20v DC external input.
+A tea candle-sized LED-powered smart light. The PCB stack is 38.6mm in diameter and 2cm tall, so that it can be placed in a standard candle holder or lantern (which are normally >40mm round spaces). It features RGB, warm white, deep red, and UV LEDs. It can be powered by USB-C or via 6-20v DC external input.
 
 This project supports both standalone Arduino firmware and Home Assistant integration via ESPHome.
 
-> **HOW TO ORDER**: We will have a limited run of pre-assembled candles ready for shipment in **Jan 2026**, you can order here: https://www.soliddifference.com/store - shipped with love from Switzerland
+> **HOW TO ORDER**: Pre-assembled candles — https://www.soliddifference.com/store — shipped from Switzerland.
 
 ## Hardware Specifications
 
 ### Core Features
 
-- **ESP32-S3 Mini** with PSRAM
+- **Custom PCB** with ESP32-S3 (4MB flash, 2MB quad PSRAM). Standalone builds use `boards/espcandle.json`; ESPHome uses the stock `esp32-s3-devkitc1-n4r2` memory profile. Pinout is candle-specific, not DevKitC.
 - **Power Input**: 6-20v DC or USB-C
 - **Form Factor**: 38.6mm diameter × 20mm tall (tea candle size)
 - **Mounting**: Fits standard candle holders and lanterns (>40mm spaces)
@@ -31,7 +31,7 @@ This project supports both standalone Arduino firmware and Home Assistant integr
 
 - **2x Bright White LEDs**: 2700K warm white, 0.5W at 150mA, 20,000 mcd
 - **2x Deep Red LEDs**: 620nm wavelength, 730 mcd
-- **1x UV LED**: 365nm wavelength, 500mA at 4V
+- **1x UV LED**: 365nm wavelength (PAM2804 driver, ~300mA)
 - **20x RGB WS2812 LEDs**: 2020 package addressable LEDs
 
 ### Hardware v1.4
@@ -83,23 +83,23 @@ A standalone firmware with built-in lighting modes and button control, build wit
 
 #### Features
 
-- **Candle Mode**: Realistic flickering using warm white and red LEDs
-- **Color Mode**: Slowly rotating rainbow patterns on RGB strip
-- **Magic Mode**: Green-to-purple transitions with UV LEDs active
-- **Auto Mode**: Automatically cycles through all modes every 60 seconds
+- **Candle**: Realistic flickering on warm white + red ember
+- **Color**: Slow HSV drift with spatial history on the RGB strip
+- **Magic**: Purple/blue drift and sparks, UV on, red drift
+- **Auto**: Cycles modes over time (standalone only; ESPHome uses the Preset select / boot button instead)
 
 #### Controls
 
-- **Short Press**: Cycle through modes (Candle → Color → Magic → Auto)
+- **Short Press**: Cycle modes (Candle → Color → Magic → Auto)
 - **Long Press (3s)**: Power on/off
-- **Serial Output**: Mode changes and status via USB (115200 baud)
+- **Serial**: Mode changes and status via USB (115200 baud)
+- **EN button**: Hardware reset
 
 #### Installation
 
-1. Install PlatformIO (in VSCode or use the command line tools)
+1. Install PlatformIO (VSCode extension or CLI)
 2. Clone this repository
-3. Open the project in PlatformIO
-4. Build and upload to your ESP32-S3 board:
+3. Build and upload:
 
    ```bash
    pio run --target upload
@@ -107,19 +107,10 @@ A standalone firmware with built-in lighting modes and button control, build wit
 
 #### Configuration
 
-The demo firmware is pre-configured for the PCB pinout. Key settings in `src/main.cpp`:
-- PWM frequency: 5kHz, 8-bit resolution
-- Max brightness: 30% (safety limit)
-- WS2812: 25% brightness, 20 LEDs
-
-The "boot" button will cycle through the modes. There are four modes:
-
-- Candle: Realistic flickering using warm white and red LEDs
-- Color: Slowly rotating rainbow patterns on RGB strip
-- Magic: Green-to-purple transitions with UV LEDs active
-- Auto: Automatically cycles through all modes over time.
-
-The "EN" button will reset the device.
+Pinout and caps live in `src/config.h` (not `main.cpp`):
+- PWM: 5kHz, 12-bit (0–4095 duty)
+- Channel caps: white 40%, UV 75%, red 80%
+- WS2812: global brightness 64/255, 20 LEDs on GPIO33
 
 ### Onboarding (ESPHome)
 
@@ -137,41 +128,31 @@ Full Home Assistant integration with advanced lighting effects and remote contro
 
 #### For end users (no build, web flasher)
 
-If the candle is not yet flashed, or to re-flash from a browser:
-
-1. Visit [web.esphome.io](https://web.esphome.io) in a Chromium-based browser (Chrome/Edge).
-2. Connect the candle over USB-C and click **Connect**.
-3. Pick `espcandle.factory.factory.yaml` and **Install**.
-4. Continue from step 2 of the end-user flow above.
+Browser flashing needs a published factory `.bin` (and a filled-in `esphome/manifest.json`). That release pipeline is not finished yet. Until then, use the developer flash path below, or flash a pre-built binary if one was provided with your candle.
 
 #### For developers (build from this repo)
-
-The `esphome/` directory holds four files:
 
 | File | Role |
 |---|---|
 | `espcandle.base.yaml` | Hardware, provisioning, diagnostics. Single source for `project: version` and `min_version`. No secrets. |
 | `espcandle.example.yaml` | Per-device named overlay (runtime PSK, no secrets). Copy to `candle-<name>.yaml` for a custom name. |
 | `espcandle.factory.yaml` | Device Builder import target (generic name + MAC suffix). What HA imports on **Adopt**. |
-| `espcandle.factory.factory.yaml` | Bench-flash binary (the factory image + `http_request` OTA self-update). What `make factory` builds. |
+| `espcandle.factory.factory.yaml` | Bench-flash image (factory + `http_request` OTA self-update). What `make factory` builds. |
 | `secrets-example.yaml` | Dev/CI-only static-key path (see below). |
-
-Build the factory image:
 
 ```bash
 cd /path/to/espcandle-demo
 python3.13 -m venv .venv            # Python 3.13, not 3.14
 source .venv/bin/activate
 pip install -r esphome/requirements.txt
-make smoke-test          # config validation + compile, no hardware (PR gate)
-make factory-run         # config + compile + flash + monitor (on-device)
+
+make smoke-test      # config + compile, no hardware (PR gate)
+make factory-run     # compile + flash + monitor factory image
 ```
 
-`make smoke-test` is the no-hardware gate — run it before pushing. For the
-full on-device runbook (provision, adopt, effect checks, known issues) see
-[docs/testing.md](docs/testing.md).
+Run these from the **repo root** (the root `Makefile` forwards into `esphome/`). Close any PlatformIO serial monitor first so the USB port is free. Full on-device runbook: [docs/testing.md](docs/testing.md).
 
-Build a named per-device image (runtime PSK, no secrets):
+Named per-device image (runtime PSK, no secrets):
 
 ```bash
 cp esphome/espcandle.example.yaml esphome/candle-livingroom.yaml
@@ -179,9 +160,9 @@ cp esphome/espcandle.example.yaml esphome/candle-livingroom.yaml
 esphome run esphome/candle-livingroom.yaml
 ```
 
-For a fully offline, static-key build (no HA runtime adoption), copy `esphome/secrets-example.yaml` to `esphome/secrets.yaml` and follow the commented usage block at the bottom of that file. This is the dev/CI path only.
+Offline static-key builds: copy `esphome/secrets-example.yaml` → `esphome/secrets.yaml` and follow the usage block at the bottom of that file (dev/CI only).
 
-**What the base exposes:** one user-facing light — **ESP Candle** — which joins the 20-LED RGB strip and the four PWM channels (warm white 1/2, UV, deep red) into a single logical light with **custom effects** named **Candle** (Perlin-noise flame on the warm whites + red ember), **Color** (HSV drift with spatial history), and **Magic** (drift/spark in purple/blue with UV + red drift) — ported from the standalone firmware into `esphome/includes/candle_effects.h`. Restart / Factory Reset / Safe Mode buttons. A compact diagnostic set (WiFi signal, uptime, internal temperature, IP/SSID/MAC, ESPHome version) — hidden by default to keep the UI clean; enable in HA as needed. The boot button short-press cycles effects; a 3-second hold toggles the candle on/off. The underlying per-channel lights are internal (not exposed). For I2C, extra GPIO 10/11/12, the web server, and direct per-channel control, see [docs/modders.md](docs/modders.md).
+**What the base exposes:** one HA light — **ESP Candle** (RGB strip) with custom effects **Candle**, **Color**, and **Magic** (`esphome/includes/candle_effects.h`); a **Preset** select; and config numbers for White / Red / UV (LEDC). Boot button: short-press cycles Warm Glow → Candle → Color → Magic; hold 3–10s then release to toggle; hold 10s for factory reset. Recovery buttons in HA: Restart / Safe Mode / Factory Reset. Internal Temperature is enabled; other diagnostics are hidden by default. Modder options (I2C, GPIO 10/11/12, web server, alternate channel wiring): [docs/modders.md](docs/modders.md).
 
 **Customising hardware for variants:** pin assignments and power caps are `substitutions:` in `espcandle.base.yaml`. Override them in the per-device YAML before the `packages:` line:
 
@@ -238,7 +219,7 @@ The end-to-end call sequence: **USB-C power → BLE advert → Wi-Fi join → mD
 - **Device not discovered**: confirm the candle joined Wi-Fi - it should show as `esp32-candle-XXXXXX.local` on the network. If it didn't, it will fall back to its setup AP after ~90 seconds; re-run improv-serial from the web flasher or join the AP and use the captive portal.
 - **API connection failed**: by default Home Assistant generates and stores a unique encryption key during adoption. If the device was reflashed, HA's stored key no longer matches and adoption fails - delete the device in HA and let it re-discover so a new key is negotiated. If you pinned a key in your per-device YAML, that value must match what HA has on file.
 - **OTA update failed**: confirm the device is on Wi-Fi. If you set an OTA password, it must match the one used at flash time. Press the candle's **Safe Mode** button in HA, then retry.
-- **Want to start over**: press **Factory Reset** in HA (or hold the boot button for 10s) - the candle wipes Wi-Fi creds and re-enters provisioning mode.
+- **Want to start over**: press **Factory Reset** in HA, or hold the boot button for 10 seconds — wipes Wi-Fi credentials and the API encryption key, then re-enters provisioning.
 
 ## Development Notes
 

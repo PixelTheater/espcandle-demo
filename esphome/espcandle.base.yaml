@@ -21,12 +21,10 @@
 #   - is discovered by Home Assistant via the native API once on Wi-Fi
 #   - accepts OTA updates from Home Assistant or the ESPHome CLI
 #
-# Only ONE light is exposed to Home Assistant by default: "ESP Candle", a
-# partition light that joins the addressable RGB strip and the four PWM
-# channels (warm white 1/2, UV, deep red) into a single logical light with
-# curated effects (Candle / Color / Magic). The underlying channel lights
-# are kept internal so they do not clutter the HA UI. Modders who want
-# direct per-channel control should see docs/modders.md.
+# Only ONE light is exposed to Home Assistant by default: "ESP Candle" (the
+# RGB strip) with Candle / Color / Magic effects. Warm white, UV, and deep red
+# are driven via ledc outputs — exposed as config number sliders and a Preset
+# select, not as separate light tiles. See docs/modders.md.
 
 substitutions:
   name: esp32-candle
@@ -34,7 +32,7 @@ substitutions:
   room: ""
   device_description: "ESP32-S3 powered smart tea candle (RGB + warm white + UV + deep red)"
   project_name: "PixelTheater.ESP Candle"
-  project_version: "1.5.0"
+  project_version: "1.6.0"
 
   # Logging level: NONE, ERROR, WARN, INFO (default), DEBUG, VERBOSE, VERY_VERBOSE
   log_level: "INFO"
@@ -54,9 +52,12 @@ substitutions:
   i2c_scl_pin:   GPIO9
   button_pin:    GPIO0    # boot button
 
-  # Power caps - protect LEDs and the supply.
-  white_max_power: "70%"
-  uv_max_power:    "50%"
+  # Power caps — white/red aligned with standalone src/config.h.
+  # UV ceiling kept lower than the demo's 75%: 365nm looks very bright in a
+  # tea-light and was harsh at the higher product preset levels.
+  white_max_power: "40%"
+  uv_max_power:    "40%"
+  red_max_power:   "80%"
 
   # Persistence: which state lights/switches restore to after a power cut.
   # Options: ALWAYS_ON, ALWAYS_OFF, RESTORE_DEFAULT_ON, RESTORE_DEFAULT_OFF.
@@ -80,8 +81,13 @@ esphome:
   includes:
     - includes/candle_effects.h
 
+# Custom ESP Candle PCB. ESPHome needs a board name from its built-in list;
+# esp32-s3-devkitc1-n4r2 matches our SoC/memory (4MB flash, 2MB quad PSRAM).
+# Pinout is candle-specific via substitutions — not DevKitC silkscreen.
+# Standalone firmware uses the project-local boards/espcandle.json instead
+# (same memory profile; see platformio.ini).
 esp32:
-  board: adafruit_feather_esp32s3
+  board: esp32-s3-devkitc1-n4r2
   framework:
     type: esp-idf
 
@@ -138,6 +144,8 @@ mdns:
 #   scan: true
 
 # -- PWM outputs ------------------------------------------------------------
+# Owned exclusively by effects, Preset select, and channel number entities
+# via set_level(). No monochromatic light wrappers (avoids dual writers).
 output:
   - platform: ledc
     pin: ${white1_pin}
@@ -156,18 +164,23 @@ output:
   - platform: ledc
     pin: ${red_pin}
     id: pwm_led_4
+    max_power: ${red_max_power}
+
+# Guard so channel number set_action / light on_turn_off do not fight Preset.
+globals:
+  - id: applying_preset
+    type: bool
+    restore_value: false
+    initial_value: "false"
 
 # -- Lights -----------------------------------------------------------------
-# default_transition_length and gamma_correct settings come from the
-# ESPHome+addressable-LED best practices: pixel-mapped strips look wrong
-# with the defaults (1000ms transitions, 2.8 gamma).
-#
-# The five underlying channel lights are internal: they drive the hardware but
-# are not exposed to Home Assistant. The single visible light is the
-# "ESP Candle" partition below, which joins them into one logical light.
+# Primary HA light = RGB strip. Effects also drive PWM via ledc.
+# The light entity is the master on/off: every producing Preset leaves it ON
+# (Warm Glow uses black RGB + PWM). Toggle Off clears PWM and sets Preset Off.
 light:
   - platform: esp32_rmt_led_strip
     id: rgb_strip
+    name: "ESP Candle"
     chipset: WS2812
     rgb_order: GRB
     pin: ${led_pin}
@@ -175,78 +188,229 @@ light:
     use_dma: true
     rmt_symbols: 1024
     use_psram: false
-    internal: true
     restore_mode: ${light_restore_mode}
     default_transition_length: 0s
     gamma_correct: 1.0
-
-  - platform: monochromatic
-    id: white_1
-    output: pwm_led_1
-    internal: true
-    restore_mode: ${light_restore_mode}
-    default_transition_length: 250ms
-
-  - platform: monochromatic
-    id: white_2
-    output: pwm_led_2
-    internal: true
-    restore_mode: ${light_restore_mode}
-    default_transition_length: 250ms
-
-  - platform: monochromatic
-    id: uv_led
-    output: pwm_led_3
-    internal: true
-    restore_mode: ${light_restore_mode}
-    default_transition_length: 250ms
-
-  - platform: monochromatic
-    id: red_led
-    output: pwm_led_4
-    internal: true
-    restore_mode: ${light_restore_mode}
-    default_transition_length: 250ms
-
-  # The single user-facing light. Joins the addressable RGB strip and the
-  # four PWM channels (warm white 1/2, UV, deep red) into one logical light.
-  # Effects are named to mirror the standalone firmware modes (Candle /
-  # Color / Magic). The boot button cycles these effects (short press) and
-  # toggles the light on/off (long press).
-  - platform: partition
-    id: candle_light
-    name: "ESP Candle"
-    restore_mode: ${light_restore_mode}
-    default_transition_length: 0s
-    gamma_correct: 1.0
-    segments:
-      - id: rgb_strip
-        from: 0
-        to: 19
-      - single_light_id: white_1
-      - single_light_id: white_2
-      - single_light_id: red_led
-      - single_light_id: uv_led
     effects:
-      # Candle - custom Perlin-noise flame simulation across the warm whites
-      # and red ember (ported from the standalone firmware).
+      - addressable_lambda:
+          name: Ember
+          update_interval: 50ms
+          lambda: |-
+            espcandle::ember::tick(it, initial_run);
       - addressable_lambda:
           name: Candle
           update_interval: 50ms
           lambda: |-
             espcandle::candle::tick(it, initial_run);
-      # Color - custom HSV drift with speed random-walk and spatial history.
       - addressable_lambda:
           name: Color
           update_interval: 50ms
           lambda: |-
             espcandle::color::tick(it, initial_run);
-      # Magic - custom drift/spark phases in purple/blue with UV + red drift.
       - addressable_lambda:
           name: Magic
           update_interval: 50ms
           lambda: |-
             espcandle::magic::tick(it, initial_run);
+    on_turn_on:
+      - lambda: |-
+          // Skip while a Preset is driving the light (avoids re-entry / boot races).
+          if (id(applying_preset))
+            return;
+          auto opt = id(candle_preset).current_option();
+          if (opt.empty())
+            return;
+
+          // Custom: leave the user's RGB/effect alone (no blank / re-apply).
+          if (opt == "Custom")
+            return;
+
+          // HA's toggle often arrives as full white — blank immediately, then
+          // apply the preset so the strip never sits on a bright default frame.
+          id(applying_preset) = true;
+          {
+            auto blank = id(rgb_strip).turn_on();
+            blank.set_effect("None");
+            blank.set_rgb(0.0f, 0.0f, 0.0f);
+            blank.set_brightness(1.0f);
+            blank.perform();
+          }
+          id(applying_preset) = false;
+
+          if (opt == "Off") {
+            auto call = id(candle_preset).make_call();
+            call.set_option("Candle");
+            call.perform();
+          } else {
+            auto call = id(candle_preset).make_call();
+            call.set_option(std::string(opt.c_str(), opt.size()));
+            call.perform();
+          }
+    on_turn_off:
+      # Skip when a Preset is applying (internal light calls during set_action).
+      - if:
+          condition:
+            lambda: "return !id(applying_preset);"
+          then:
+            - lambda: |-
+                id(pwm_led_1).set_level(0.0f);
+                id(pwm_led_2).set_level(0.0f);
+                id(pwm_led_3).set_level(0.0f);
+                id(pwm_led_4).set_level(0.0f);
+                id(applying_preset) = true;
+                id(white_level).publish_state(0);
+                id(red_level).publish_state(0);
+                id(uv_level).publish_state(0);
+                id(applying_preset) = false;
+            - select.set:
+                id: candle_preset
+                option: "Off"
+
+# -- Presets ----------------------------------------------------------------
+# Primary control alongside the light. Short-press cycles Warm Glow / Candle /
+# Color / Magic. HA can also pick Off, Ember, UV Accent, Custom.
+# Selecting any producing preset turns the light entity ON so the toggle can
+# always turn everything off.
+select:
+  - platform: template
+    name: "Preset"
+    id: candle_preset
+    icon: mdi:candle
+    optimistic: true
+    restore_value: true
+    initial_option: "Off"
+    options:
+      - "Off"
+      - "Warm Glow"
+      - "Ember"
+      - "UV Accent"
+      - "Candle"
+      - "Color"
+      - "Magic"
+      - "Custom"
+    set_action:
+      - lambda: |-
+          id(applying_preset) = true;
+          auto sync_levels = [](float white_pct, float red_pct, float uv_pct) {
+            id(white_level).publish_state(white_pct);
+            id(red_level).publish_state(red_pct);
+            id(uv_level).publish_state(uv_pct);
+          };
+          auto set_pwm = [](float w, float r, float uv) {
+            id(pwm_led_1).set_level(w);
+            id(pwm_led_2).set_level(w);
+            id(pwm_led_4).set_level(r);
+            id(pwm_led_3).set_level(uv);
+          };
+          // Turn light ON with black RGB first so HA never shows a white flash
+          // before an effect paints the strip.
+          auto soft_effect = [](const char *effect) {
+            auto rgb = id(rgb_strip).turn_on();
+            rgb.set_rgb(0.0f, 0.0f, 0.0f);
+            rgb.set_brightness(1.0f);
+            rgb.set_effect(effect);
+            rgb.perform();
+          };
+
+          if (x == "Off") {
+            set_pwm(0.0f, 0.0f, 0.0f);
+            sync_levels(0, 0, 0);
+            id(rgb_strip).turn_off().perform();
+          } else if (x == "Warm Glow") {
+            // PWM-only look; keep light entity ON (black RGB) so toggle can Off.
+            set_pwm(0.10f, 0.40f, 0.0f);
+            sync_levels(10, 40, 0);
+            soft_effect("None");
+          } else if (x == "Ember") {
+            sync_levels(2, 10, 0);
+            soft_effect("Ember");
+          } else if (x == "UV Accent") {
+            set_pwm(0.0f, 0.0f, 0.50f);
+            sync_levels(0, 0, 50);
+            auto rgb = id(rgb_strip).turn_on();
+            rgb.set_effect("None");
+            rgb.set_rgb(0.06f, 0.0f, 0.18f);
+            rgb.set_brightness(0.125f);
+            rgb.perform();
+          } else if (x == "Candle") {
+            sync_levels(0, 0, 0);
+            soft_effect("Candle");
+          } else if (x == "Color") {
+            sync_levels(0, 0, 0);
+            soft_effect("Color");
+          } else if (x == "Magic") {
+            sync_levels(0, 0, 0);
+            soft_effect("Magic");
+          }
+          // "Custom" leaves current levels/effect alone
+          id(applying_preset) = false;
+
+# -- Channel levels (HA Configuration section) ------------------------------
+number:
+  - platform: template
+    name: "White Brightness"
+    id: white_level
+    icon: mdi:lightbulb-outline
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 0
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: |-
+          float w = x / 100.0f;
+          id(pwm_led_1).set_level(w);
+          id(pwm_led_2).set_level(w);
+          if (!id(applying_preset) && id(candle_preset).current_option() != "Custom") {
+            auto call = id(candle_preset).make_call();
+            call.set_option("Custom");
+            call.perform();
+          }
+
+  - platform: template
+    name: "Red Intensity"
+    id: red_level
+    icon: mdi:circle
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 0
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(pwm_led_4).set_level(x / 100.0f);
+          if (!id(applying_preset) && id(candle_preset).current_option() != "Custom") {
+            auto call = id(candle_preset).make_call();
+            call.set_option("Custom");
+            call.perform();
+          }
+
+  - platform: template
+    name: "UV Intensity"
+    id: uv_level
+    icon: mdi:weather-night
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 0
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(pwm_led_3).set_level(x / 100.0f);
+          if (!id(applying_preset) && id(candle_preset).current_option() != "Custom") {
+            auto call = id(candle_preset).make_call();
+            call.set_option("Custom");
+            call.perform();
+          }
 
 # -- Boot button ------------------------------------------------------------
 binary_sensor:
@@ -264,20 +428,40 @@ binary_sensor:
     id: boot_button
     entity_category: diagnostic
     disabled_by_default: true
+    filters:
+      - delayed_on_off: 20ms
     on_multi_click:
-      # Short press: cycle to the next effect (Candle -> Color -> Magic -> ...)
+      # Short press: cycle Warm Glow → Candle → Color → Magic → …
       - timing:
           - ON for at most 1s
           - OFF for at least 0.2s
         then:
-          - light.effect.next:
-              id: candle_light
-              include_none: false
-      # Long press (>3s): toggle the candle on/off
+          - lambda: |-
+              static const char *cycle[] = {"Warm Glow", "Candle", "Color", "Magic"};
+              constexpr int n = 4;
+              auto cur = id(candle_preset).current_option();
+              int next = 0;
+              for (int i = 0; i < n; i++) {
+                if (cur == cycle[i]) {
+                  next = (i + 1) % n;
+                  break;
+                }
+              }
+              auto call = id(candle_preset).make_call();
+              call.set_option(cycle[next]);
+              call.perform();
+      # Long press (3–10s, then release): toggle RGB on/off.
+      # Requires release so a 10s factory-reset hold does not also toggle.
       - timing:
-          - ON for at least 3s
+          - ON for 3s to 10s
+          - OFF for at least 0.1s
         then:
-          - light.toggle: candle_light
+          - light.toggle: rgb_strip
+      # Hold 10s: factory reset (wipe Wi-Fi / API key, re-enter provisioning)
+      - timing:
+          - ON for at least 10s
+        then:
+          - button.press: factory_reset_button
 
 # -- Extra GPIOs as switches (modder/expansion only) -----------------------
 # These GPIO10/11/12 pins are exposed as switches for tinkerers. On some
@@ -316,13 +500,10 @@ button:
     entity_category: config
 
 # -- Diagnostics ------------------------------------------------------------
-# Sensors report to Home Assistant but the noisy ones are hidden by default
-# to keep the device UI clean. Enable them in HA if needed for support.
 sensor:
   - platform: internal_temperature
     name: "Internal Temperature"
     entity_category: diagnostic
-    disabled_by_default: true
 
   - platform: uptime
     name: "Uptime"
@@ -376,7 +557,7 @@ text_sensor:
 # time:
 #   - platform: sntp
 #     id: sntp_time
-#     timezone: "${timezone}"
+#     timezone: "Europe/Zurich"   # or add a timezone: substitution above
 #     servers:
 #       - "0.pool.ntp.org"
 #       - "1.pool.ntp.org"

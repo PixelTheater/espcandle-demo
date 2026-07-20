@@ -61,9 +61,9 @@ There is **no runtime OTA-password adoption flow** in ESPHome 2026.6.x. The fact
 
 `wifi: ap: {}` is an open access point that comes up only if Wi-Fi fails (default after 90s). It serves only the captive-portal provisioning page. Accepted per the user decision for the retail path.
 
-### Web server — open, no auth (open question)
+### Web server — off by default (open question)
 
-The base config ships `web_server: port: 80` with no `auth:` block. The factory firmware inherits this, so anyone on the LAN can view status and control lights via `http://<device>.local`. The trusted-LAN model accepts this for now; the alternative is to add `web_server: auth:` (requires a password, more setup) or remove `web_server` from the factory path entirely (HA becomes the only UI). This is recorded as an open question below; no change is made in this plan.
+The factory firmware does **not** enable `web_server`. Home Assistant is the primary UI. Modders can uncomment the block in `espcandle.base.yaml` (see `docs/modders.md`); it ships without `auth:` (trusted-LAN). Alternatives if re-enabled: add `web_server: auth:`, or leave it out of the factory path. Recorded as an open question below.
 
 ## Versioning
 
@@ -75,5 +75,5 @@ The base config ships `web_server: port: 80` with no `auth:` block. The factory 
 2. **Static fallback AP password for retail** — set a `!secret`/printed password on the fallback AP instead of leaving it open.
 3. **Hosted manifest URL** — serve `manifest.json` (and the factory binary) from a project-owned URL (`support.soliddifference.com`) rather than `raw.githubusercontent.com`, for stable retail update URLs.
 4. **Runtime OTA password** — waiting on upstream ESPHome support; until then, OTA remains open on the LAN.
-5. **GPIO10-12 pin-safety review** — the base exposes GPIO10/11/12 as user-controllable switches; on some ESP32-S3 modules these may be strapping or SPI/flash pins. Tracked as housekeeping item TD-015; out of scope for this adoption plan.
-6. **`web_server` auth decision** — keep (trusted-LAN), add `auth:`, or remove from the factory path. See the security model above.
+5. **GPIO10-12 pin-safety review** — the switches for GPIO10/11/12 are commented out in the base; before enabling them for modders, confirm they are safe GPIO on the candle's ESP32-S3 module (not SPI flash / strapping). Tracked as housekeeping item TD-015.
+6. **`web_server` decision** — leave commented out (current), enable with `auth:`, or enable open on trusted LAN. See the security model above.

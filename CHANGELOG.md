@@ -15,21 +15,18 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 - Add `dutyToFastLEDBrightness()` helper and use it from `setChannelDuty`, `testRamp`, `testRand`, `testHold`, `testRgbRainbow`, and `testRgbChase` so 0-4095 PWM duty values are scaled correctly to FastLED's 0-255 range and no longer wrap modulo 256.
 - Add a bounds check in `setPWMBrightness()` so out-of-range channel indices are rejected before indexing `LED_PINS[]`.
 - Ignore the audit/agent scratch directory `.pi/` in `.gitignore`.
-- Lean ESPHome factory YAML: expose one user-facing `ESP Candle` partition light
-  (RGB strip + warm white 1/2 + UV + deep red) with curated effects
-  (Candle / Color / Magic); mark the five underlying channel lights
-  `internal: true`; hide noisy diagnostics with `disabled_by_default: true`.
-- Boot button: short press cycles effects, long press toggles the candle
-  on/off (uses a `globals` counter + `light.turn_on` lambda because
-  `light.effect.next` requires ESPHome >= 2026.6.0 and this firmware pins
-  the 2025.10/2025.12 line).
-- `docs/modders.md`: I2C, extra GPIO 10/11/12, web server, direct
-  per-channel control, and the static-key dev path.
+- Lean ESPHome factory YAML: one user-facing `ESP Candle` RGB light with
+  Candle / Color / Magic effects; Preset select; White / Red / UV config
+  numbers driving LEDC directly (no partition light).
+- Boot button: short press cycles presets (Warm Glow → Candle → Color →
+  Magic); hold 3–10s then release to toggle; hold 10s to factory-reset.
+- `docs/modders.md`: I2C, extra GPIO 10/11/12, web server, channel control,
+  and the static-key dev path.
 - Custom ESPHome effect engine: port the standalone Candle/Color/Magic
   algorithms into `esphome/includes/candle_effects.h` (Perlin-noise flame,
   HSV drift+history, drift/spark+UV) wired as `addressable_lambda`
-  effects on the `ESP Candle` partition light. Self-contained value-noise
-  (no FastLED dependency) since `esp32_rmt_led_strip` is not FastLED-backed.
+  effects on the RGB light. Self-contained value-noise (no FastLED
+  dependency) since `esp32_rmt_led_strip` is not FastLED-backed.
 - `make smoke-test` Makefile target: validates all four YAMLs and compiles
   the factory binary (no hardware required). PR gate.
 - `docs/testing.md`: full validation runbook (automated smoke test +
@@ -37,29 +34,23 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 ### Changed
 
+- ESPHome architecture A (v1.6.0): drop partition + monochromatic channel
+  lights; PWM owned by effects / Preset / numbers via `set_level`. Power
+  caps aligned with standalone (`white` 40%, `uv` 75%, `red` 80%). Magic
+  sparks brighter (higher chance, slower fade, occasional double spark).
+  Internal Temperature enabled by default.
 - Bump ESPHome pin to `esphome@2026.6.5` (Makefile) and `>=2026.6.0,<2027.0.0`
-  (requirements.txt); `min_version: 2026.6.0` in the base. Unblocks
-  `light.effect.next` for the button.
-- Boot button effect cycling simplified to `light.effect.next` (was a
-  `globals` counter + `light.turn_on` lambda, needed because the action
-  landed in ESPHome 2026.6.0 and the firmware previously pinned 2025.12).
-  - `esphome/espcandle.base.yaml`: `api:` now ships with no baked-in
-    key by default; Home Assistant negotiates a per-device Noise PSK
-    at adoption (requires ESPHome >= 2025.10.0). Bumped `min_version`
-    to 2025.10.0 and `project_version` to 1.5.0.
-  - `esphome/espcandle.example.yaml`: rewritten as a per-device named
-    overlay with no secrets; `name_add_mac_suffix: false`.
-  - Added `esphome/espcandle.factory.yaml` (Device Builder import
-    target) and `esphome/espcandle.factory.factory.yaml` (bench-flash
-    binary with `http_request` OTA self-update).
-  - Added `esphome/manifest.json` skeleton (populated at release time).
-  - `esphome/secrets-example.yaml`: repurposed for the dev-only
-    static-key path.
-  - `esphome/Makefile` + `requirements.txt`: bumped ESPHome pin to
-    2025.10.5 and the range to `>=2025.10.0,<2026.0.0`; added
-    `factory`, `factory-run`, `factory-config` targets.
-  - See `docs/adoption-strategy.md` for the full strategy and security
-    model.
+  (requirements.txt); `min_version: 2026.6.0` in the base.
+- Single-firmware runtime-PSK adoption path: `api:` with no baked-in key;
+  `espcandle.factory.yaml` / `espcandle.factory.factory.yaml`;
+  `manifest.json` skeleton; secrets file for the static-key dev path only.
+  See `docs/adoption-strategy.md`.
+- PlatformIO: project-local `boards/espcandle.json` (N4R2 flash/PSRAM
+  profile, product name). ESPHome: stock `esp32-s3-devkitc1-n4r2` for the
+  same memory profile (ESPHome board list). Pinout is candle-specific.
+- README / docs sync: make targets run from `esphome/`; Magic mode and UV
+  count; web flasher status; adoption-strategy matches lean YAML
+  (web_server and GPIO10–12 commented out).
 - Add README frontmatter for documentation indexing.
 - Rename the LED configuration image asset to `media/candle-leds-and-features.jpg` and update the README reference.
 - Replace the fragile GitHub `issues/new` URL in the README with stable issue-reporting wording.
@@ -68,6 +59,8 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 ### Removed
 
 - Remove the orphan `esphome/espcandle.yaml` (a leftover from the base/example refactor; not referenced by the README or the Makefile).
+- Remove ESPHome partition light and internal monochromatic channel lights
+  (replaced by RGB light + Preset + LEDC number entities).
 
 ## [0.1.0] - 2026-05-04
 
