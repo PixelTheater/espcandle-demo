@@ -6,6 +6,8 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-20
+
 ### Added
 
 - Add MIT `LICENSE` file.
@@ -33,13 +35,18 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
   PlatformIO demo build on push/PR.
 - `docs/testing.md`: full validation runbook (automated smoke test +
   on-device flash/provision/adopt/effect checks + known boot-loop risk).
+- `docs/support-site-release.md` and `.github/workflows/publish-firmware.yml`:
+  publish merged ESPHome + Standalone bins to GitHub Releases and notify
+  support.soliddifference.com for browser flashing.
 
 ### Changed
 
+- Align ESPHome `project_version` with the release tag (`0.2.0`); previously
+  the internal architecture label was `1.6.0`.
 - Disable HTTP self-update on the factory flash image until a release
   hosts `manifest.json` + OTA binary (stops boot-time 404 noise). HA
   ESPHome OTA remains available.
-- ESPHome architecture A (v1.6.0): drop partition + monochromatic channel
+- ESPHome architecture A: drop partition + monochromatic channel
   lights; PWM owned by effects / Preset / numbers via `set_level`. Power
   caps aligned with standalone (`white` 40%, `uv` 75%, `red` 80%). Magic
   sparks brighter (higher chance, slower fade, occasional double spark).
@@ -88,5 +95,6 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 - Remove older per-candle ESPHome example/config files that were superseded by the shared base and per-device template.
 
-[Unreleased]: https://github.com/PixelTheater/espcandle-demo/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/PixelTheater/espcandle-demo/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.2.0
 [0.1.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.1.0

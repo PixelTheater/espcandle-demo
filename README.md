@@ -3,7 +3,7 @@ title: ESP32 Candle Firmware
 description: Tea-candle-sized ESP32-S3 LED smart light — Home Assistant via ESPHome (primary) and optional PlatformIO demo.
 tags: [esphome, home-assistant, platformio, hardware-specs, firmware-installation, troubleshooting, led-lighting]
 lastmod: 2026-07-20
-version: 0.2.0-dev
+version: 0.2.0
 ---
 
 # ESP32 Candle Firmware
@@ -42,7 +42,12 @@ Boot button: short-press cycles Warm Glow → Candle → Color → Magic; hold 3
 
 ### Web flasher
 
-Browser flashing needs a published factory `.bin` (and a filled-in `esphome/manifest.json`). That release pipeline is not finished yet. Until then, use the developer flash path below, or flash a pre-built binary if one was provided with your candle.
+Browser flashing is hosted at
+[support.soliddifference.com/firmware/](https://support.soliddifference.com/firmware/)
+(ESP Web Tools). Publishing a GitHub Release with the merged binaries activates
+the ESP Candle card there — see [docs/support-site-release.md](docs/support-site-release.md).
+Until the first release syncs, the card shows "coming soon". For local
+development, use the flash path below.
 
 ### Build from this repo
 
@@ -228,7 +233,7 @@ Pinout and caps live in `src/config.h`: PWM 5kHz 12-bit; channel caps white 40%,
 
 ## Release History
 
-See [CHANGELOG.md](CHANGELOG.md) for release notes. The current release tag is [`v0.1.0`](https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.1.0).
+See [CHANGELOG.md](CHANGELOG.md) for release notes. The next release tag is `v0.2.0` (not published yet; `v0.1.0` is the last tag on GitHub).
 
 ## License
 

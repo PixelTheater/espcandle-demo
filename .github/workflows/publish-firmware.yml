@@ -1,0 +1,151 @@
+# Build merged ESPHome + Standalone binaries, attach them to a GitHub Release,
+# and notify support.soliddifference.com so the web flasher activates.
+#
+# Contract: docs/support-site-release.md
+# Requires repo secret SUPPORT_SITE_PAT (cross-org repository_dispatch).
+
+name: Publish firmware to support site
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without v prefix (must match an existing release tag)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-firmware-${{ github.event.release.tag_name || inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version and release metadata
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          PUBLISHED_AT: ${{ github.event.release.published_at }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$EVENT_NAME" = "release" ]; then
+            TAG="$TAG_NAME"
+            VERSION="${TAG#v}"
+            RELEASE_DATE="${PUBLISHED_AT%%T*}"
+            NOTES="$RELEASE_BODY"
+            if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
+              NOTES="$RELEASE_NAME"
+            fi
+            if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
+              NOTES="ESP Candle firmware ${VERSION}"
+            fi
+          else
+            VERSION="${INPUT_VERSION#v}"
+            TAG="v${VERSION}"
+            RELEASE_DATE="$(date -u +%Y-%m-%d)"
+            NOTES="Republish ${VERSION}"
+            gh release view "$TAG" >/dev/null
+          fi
+
+          {
+            echo "version=${VERSION}"
+            echo "tag=${TAG}"
+            echo "release_date=${RELEASE_DATE}"
+            echo "release_notes<<EOF"
+            printf '%s\n' "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Publishing firmware version ${VERSION} (tag ${TAG})"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: esphome/requirements.txt
+
+      - name: Install ESPHome + PlatformIO
+        run: |
+          pip install -r esphome/requirements.txt
+          pip install platformio
+
+      - name: Cache PlatformIO / ESPHome build trees
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            esphome/.esphome
+            .pio
+          key: publish-${{ runner.os }}-${{ hashFiles('esphome/requirements.txt', 'esphome/**/*.yaml', 'esphome/includes/**', 'platformio.ini', 'boards/**', 'src/**', 'include/**') }}
+          restore-keys: |
+            publish-${{ runner.os }}-
+            esphome-${{ runner.os }}-
+            pio-${{ runner.os }}-
+
+      - name: Build ESPHome factory image
+        run: make factory ESPHOME=esphome
+
+      - name: Build PlatformIO standalone image
+        run: pio run -e esp32s3
+
+      - name: Package release assets
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          ESPHOME_SRC="esphome/.esphome/build/espcandle/.pioenvs/espcandle/firmware.factory.bin"
+          STANDALONE_SRC=".pio/build/esp32s3/firmware.factory.bin"
+
+          test -f "$ESPHOME_SRC" || { echo "::error::Missing ESPHome factory bin at $ESPHOME_SRC"; exit 1; }
+          test -f "$STANDALONE_SRC" || { echo "::error::Missing PlatformIO factory bin at $STANDALONE_SRC"; exit 1; }
+
+          cp "$ESPHOME_SRC" "firmware-espcandle-esphome-${VERSION}.bin"
+          cp "$STANDALONE_SRC" "firmware-espcandle-${VERSION}.bin"
+
+          ls -la firmware-espcandle*.bin
+          # Sanity: merged images must be larger than a bare app (~app starts at 0x10000).
+          ESPHOME_SIZE=$(stat -c%s "firmware-espcandle-esphome-${VERSION}.bin")
+          STANDALONE_SIZE=$(stat -c%s "firmware-espcandle-${VERSION}.bin")
+          echo "ESPHome factory size: ${ESPHOME_SIZE}"
+          echo "Standalone factory size: ${STANDALONE_SIZE}"
+          if [ "$ESPHOME_SIZE" -lt 100000 ] || [ "$STANDALONE_SIZE" -lt 100000 ]; then
+            echo "::error::Factory bin unexpectedly small — refusing to publish a likely non-merged image"
+            exit 1
+          fi
+
+      - name: Upload assets to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          gh release upload "$TAG" \
+            "firmware-espcandle-esphome-${VERSION}.bin" \
+            "firmware-espcandle-${VERSION}.bin" \
+            --clobber
+
+      - name: Notify support site
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.SUPPORT_SITE_PAT }}
+          repository: soliddifference/support.soliddifference.com
+          event-type: firmware-release
+          client-payload: >-
+            {
+              "product": "espcandle",
+              "version": "${{ steps.meta.outputs.version }}",
+              "release_date": "${{ steps.meta.outputs.release_date }}",
+              "release_notes": ${{ toJSON(steps.meta.outputs.release_notes) }}
+            }
