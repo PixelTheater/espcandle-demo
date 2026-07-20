@@ -51,7 +51,7 @@ Browser flashing needs a published factory `.bin` (and a filled-in `esphome/mani
 | `espcandle.base.yaml` | Hardware, provisioning, diagnostics. Single source for `project: version` and `min_version`. No secrets. |
 | `espcandle.example.yaml` | Per-device named overlay (runtime PSK, no secrets). Copy to `candle-<name>.yaml` for a custom name. |
 | `espcandle.factory.yaml` | Device Builder import target (generic name + MAC suffix). What HA imports on **Adopt**. |
-| `espcandle.factory.factory.yaml` | Bench-flash image (factory + `http_request` OTA self-update). What `make factory` builds. |
+| `espcandle.factory.factory.yaml` | Bench-flash image (same as factory for now). HTTP self-update disabled until a release publishes `manifest.json` + OTA bin. What `make factory` builds. |
 | `secrets-example.yaml` | Dev/CI-only static-key path (see below). |
 
 ```bash
@@ -113,7 +113,7 @@ Checklist against [Made for ESPHome](https://esphome.io/guides/made_for_esphome/
 | Config compiles and runs with no user edits after adopt | Yes (runtime PSK path) |
 | Every component has an `id` (Take Control / extend) | Yes |
 | Product name does not contain “ESPHome” | Yes (“ESP Candle”) |
-| Users can apply updates on ready-made devices | Partial — ESPHome OTA works; published `manifest.json` / web-flasher binary still needed for HTTP self-update |
+| Users can apply updates on ready-made devices | Partial — ESPHome OTA from HA works; HTTP self-update / web-flasher binary still need a published release |
 
 Next steps when ready to apply: open a PR on [devices.esphome.io](https://github.com/esphome/devices), then email `esphome@openhomefoundation.org` with the PR link.
 

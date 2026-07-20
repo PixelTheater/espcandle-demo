@@ -36,6 +36,9 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 ### Changed
 
+- Disable HTTP self-update on the factory flash image until a release
+  hosts `manifest.json` + OTA binary (stops boot-time 404 noise). HA
+  ESPHome OTA remains available.
 - ESPHome architecture A (v1.6.0): drop partition + monochromatic channel
   lights; PWM owned by effects / Preset / numbers via `set_level`. Power
   caps aligned with standalone (`white` 40%, `uv` 75%, `red` 80%). Magic

@@ -67,7 +67,7 @@ The factory firmware does **not** enable `web_server`. Home Assistant is the pri
 
 ## Versioning
 
-`project: version` is single-sourced in `esphome/espcandle.base.yaml` (currently `1.5.0`). The factory YAMLs inherit it via `packages:` and do not redeclare it. `esphome/manifest.json` is a skeleton; a release script (not yet implemented) populates its `version`, `url`, and hash fields from the built `espcandle.factory.factory.bin`. Bumping the version is a two-edit change: the `project_version` substitution in the base, and the `version` field in the manifest (at release time).
+`project: version` is single-sourced in `esphome/espcandle.base.yaml` (currently `1.6.0`). The factory YAMLs inherit it via `packages:` and do not redeclare it. `esphome/manifest.json` is a skeleton; HTTP self-update on the factory flash image is **disabled** until a release script populates the manifest and hosts `firmware.ota.bin`. Bumping the version is a two-edit change at release time: the `project_version` substitution in the base, and the `version` field in the manifest.
 
 ## Open questions
 

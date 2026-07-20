@@ -38,9 +38,9 @@ logs:
 clean:
 	rm -rf .esphome
 
-# Factory image (bench flash / web flasher). Compiles the
-# espcandle.factory.factory.yaml, which packages the runtime-PSK
-# factory config plus http_request OTA self-update.
+# Factory image (bench flash / web flasher). Compiles
+# espcandle.factory.factory.yaml (same as factory until HTTP
+# self-update is re-enabled with a published manifest).
 factory-config:
 	$(ESPHOME) config $(FACTORY_YAML)
 

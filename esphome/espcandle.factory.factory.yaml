@@ -1,9 +1,10 @@
 # ESP Candle - factory flash image (bench / web flasher).
 #
-# This is the binary flashed to each candle at the bench or via
-# web.esphome.io. It extends espcandle.factory.yaml with an
-# http_request OTA + update component so Home Assistant can offer
-# firmware updates from the GitHub-hosted manifest.
+# Bench-flash / web-flasher entry point. Same config as espcandle.factory.yaml
+# for now. HTTP self-update is disabled until a release publishes a real
+# manifest.json + firmware.ota.bin (fetching the unpublished URL only
+# produced boot-time 404 noise). Local ESPHome OTA from HA still works via
+# the base `ota: - platform: esphome` block.
 #
 # Users (and the Device Builder) should import espcandle.factory.yaml,
 # not this file.
@@ -11,16 +12,15 @@
 packages:
   factory: !include espcandle.factory.yaml
 
-# Add HTTPS OTA alongside the base's esphome-platform OTA. Both are
-# active; the base's local OTA is unchanged.
-ota:
-  - platform: http_request
-    id: ota_http_request
-
-update:
-  - platform: http_request
-    id: update_http_request
-    name: Firmware
-    source: https://raw.githubusercontent.com/PixelTheater/espcandle-demo/main/esphome/manifest.json
-
-http_request:
+# --- HTTP OTA / update (re-enable when a release hosts these assets) -------
+# ota:
+#   - platform: http_request
+#     id: ota_http_request
+#
+# update:
+#   - platform: http_request
+#     id: update_http_request
+#     name: Firmware
+#     source: https://raw.githubusercontent.com/PixelTheater/espcandle-demo/main/esphome/manifest.json
+#
+# http_request:
