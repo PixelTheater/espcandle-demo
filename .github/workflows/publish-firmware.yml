@@ -105,11 +105,27 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
           set -euo pipefail
-          ESPHOME_SRC="esphome/.esphome/build/espcandle/.pioenvs/espcandle/firmware.factory.bin"
+          # ESPHome 2026.x (IDF build) writes under build/; older PlatformIO
+          # layout used .pioenvs/. Accept either so local and CI stay aligned.
+          ESPHOME_SRC=""
+          for candidate in \
+            esphome/.esphome/build/espcandle/build/firmware.factory.bin \
+            esphome/.esphome/build/espcandle/.pioenvs/espcandle/firmware.factory.bin
+          do
+            if [ -f "$candidate" ]; then
+              ESPHOME_SRC="$candidate"
+              break
+            fi
+          done
           STANDALONE_SRC=".pio/build/esp32s3/firmware.factory.bin"
 
-          test -f "$ESPHOME_SRC" || { echo "::error::Missing ESPHome factory bin at $ESPHOME_SRC"; exit 1; }
+          if [ -z "$ESPHOME_SRC" ]; then
+            echo "::error::Missing ESPHome factory bin (checked build/ and .pioenvs/)"
+            find esphome/.esphome/build/espcandle -name 'firmware*.bin' 2>/dev/null || true
+            exit 1
+          fi
           test -f "$STANDALONE_SRC" || { echo "::error::Missing PlatformIO factory bin at $STANDALONE_SRC"; exit 1; }
+          echo "Using ESPHome factory bin: $ESPHOME_SRC"
 
           cp "$ESPHOME_SRC" "firmware-espcandle-esphome-${VERSION}.bin"
           cp "$STANDALONE_SRC" "firmware-espcandle-${VERSION}.bin"

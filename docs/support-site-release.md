@@ -52,13 +52,15 @@ Copy and rename — do not publish the bare `firmware.bin` (app at `0x10000`).
 
 ```bash
 make factory   # compiles espcandle.factory.factory.yaml (node name: espcandle)
-# -> esphome/.esphome/build/espcandle/.pioenvs/espcandle/firmware.factory.bin
-cp esphome/.esphome/build/espcandle/.pioenvs/espcandle/firmware.factory.bin \
-   firmware-espcandle-esphome-<version>.bin
+# ESPHome 2026.x (IDF):
+#   esphome/.esphome/build/espcandle/build/firmware.factory.bin
+# Older PlatformIO layout (still possible locally):
+#   esphome/.esphome/build/espcandle/.pioenvs/espcandle/firmware.factory.bin
+cp <path-above> firmware-espcandle-esphome-<version>.bin
 ```
 
-The node name is `espcandle` (from `esphome.name` in the factory YAML), so the
-path is stable — pin it in CI rather than globbing.
+The node name is `espcandle` (from `esphome.name` in the factory YAML). The
+publish workflow checks both layouts.
 
 #### Standalone demo image
 
