@@ -105,26 +105,24 @@ Once adopted, an OTA update over Wi-Fi should work:
 
 ## 6. What's not (yet) automated
 
-- **Hardware-in-the-loop**: no automated rig to flash, power-cycle, and assert serial markers or LED output. The `make smoke-test` target is config+compile only. A future CI step could at least run `make smoke-test` on every push.
+- **Hardware-in-the-loop**: no automated rig to flash, power-cycle, and assert serial markers or LED output. CI runs config+compile only.
 - **Effect visual regression**: there's no way to assert LED output without a camera or photodiode rig. Effect validation is manual (section 4).
 - **First-boot / heap issues under load**: rare; needs serial capture on real hardware.
 
-## CI hook (future)
+## CI
 
-A minimal GitHub Action to run the smoke test on every PR:
+GitHub Actions workflow: `.github/workflows/ci.yml` (push / PR).
 
-```yaml
-# .github/workflows/esphome-smoke.yml  (not yet created)
-on: [push, pull_request]
-jobs:
-  smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.13" }
-      - run: pip install -r esphome/requirements.txt
-      - run: make smoke-test
+| Job | What it runs |
+|---|---|
+| `esphome-smoke` | `make smoke-test` (Python 3.13 + `esphome/requirements.txt`) |
+| `pio-demo` | `pio run -e esp32s3` (standalone demo firmware) |
+
+Local equivalent before opening a PR:
+
+```bash
+make smoke-test
+pio run -e esp32s3
 ```
 
-This would catch config/compile regressions (including the custom effect engine) without hardware. The on-device runbook above remains manual.
+On-device / HA checks remain manual (sections 2–5).

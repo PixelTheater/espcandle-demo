@@ -29,6 +29,8 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
   dependency) since `esp32_rmt_led_strip` is not FastLED-backed.
 - `make smoke-test` Makefile target: validates all four YAMLs and compiles
   the factory binary (no hardware required). PR gate.
+- GitHub Actions CI (`.github/workflows/ci.yml`): ESPHome smoke-test +
+  PlatformIO demo build on push/PR.
 - `docs/testing.md`: full validation runbook (automated smoke test +
   on-device flash/provision/adopt/effect checks + known boot-loop risk).
 

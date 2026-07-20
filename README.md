@@ -150,7 +150,7 @@ make smoke-test      # config + compile, no hardware (PR gate)
 make factory-run     # compile + flash + monitor factory image
 ```
 
-Run these from the **repo root** (the root `Makefile` forwards into `esphome/`). Close any PlatformIO serial monitor first so the USB port is free. Full on-device runbook: [docs/testing.md](docs/testing.md).
+Run these from the **repo root** (the root `Makefile` forwards into `esphome/`). Close any PlatformIO serial monitor first so the USB port is free. CI runs the same smoke test plus a PlatformIO demo build (`.github/workflows/ci.yml`). Full on-device runbook: [docs/testing.md](docs/testing.md).
 
 Named per-device image (runtime PSK, no secrets):
 

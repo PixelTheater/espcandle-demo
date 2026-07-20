@@ -1,7 +1,7 @@
 # Convenience targets for the ESP Candle ESPHome firmware.
 #
-# Pin the ESPHome version this project is tested against. Override on the
-# command line to test other versions, e.g.:
+# Default ESPHOME is `esphome` on PATH. The root Makefile prefers
+# `.venv/bin/esphome` when present. Override to test other versions:
 #
 #   make config ESPHOME=esphome@dev
 #   make run    ESPHOME=esphome@2026.6 DEVICE=candle-test
@@ -12,7 +12,7 @@
 #   pipx install --suffix=@2026.6 esphome==2026.6.5
 #   pipx install --suffix=@dev       esphome==dev
 
-ESPHOME ?= esphome@2026.6.5
+ESPHOME ?= esphome
 DEVICE  ?= candle-test
 YAML     = $(DEVICE).yaml
 FACTORY_YAML := espcandle.factory.factory.yaml
