@@ -51,8 +51,10 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
   `manifest.json` skeleton; secrets file for the static-key dev path only.
   See `docs/adoption-strategy.md`.
 - PlatformIO: project-local `boards/espcandle.json` (N4R2 flash/PSRAM
-  profile, product name). ESPHome: stock `esp32-s3-devkitc1-n4r2` for the
-  same memory profile (ESPHome board list). Pinout is candle-specific.
+  profile, product name). Pin `platform` to pioarduino 55.03.39
+  (Arduino-ESP32 3.x) so CI matches local builds (`ledcAttach`).
+  ESPHome: stock `esp32-s3-devkitc1-n4r2` for the same memory profile.
+  Pinout is candle-specific.
 - README / docs sync: make targets run from `esphome/`; Magic mode and UV
   count; web flasher status; adoption-strategy matches lean YAML
   (web_server and GPIO10–12 commented out).
