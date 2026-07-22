@@ -12,11 +12,10 @@ shape that workflow expects.** The support site owns the manifest + page markup;
 this repo owns the binaries and the notification. This document is the contract
 between the two.
 
-> **Status (2026-07-20):** the support side is **deployed and live** at
-> <https://support.soliddifference.com/firmware/> (commit `401a8c1`). The Candle
-> card is in "coming soon" (flash buttons hidden); manifests 404 until the first
-> sync. Auto-activates when this repo publishes a release and fires the dispatch
-> below. Nothing on the support side blocks you.
+> **Status (2026-07-22):** the support side is live. Candle manifests sync from
+> GitHub Releases (`v0.2.0` published; `v0.3.0` is the next firmware drop).
+> Auto-dispatch needs a working `SUPPORT_SITE_PAT` (see below); without it,
+> bins still upload to the release and the support site can be synced manually.
 
 The Candle will be listed with **two firmware options**, matching the SIEBENUHR
 products:
@@ -88,8 +87,8 @@ cp .pio/build/esp32s3/firmware.factory.bin firmware-espcandle-<version>.bin
 > **Version story — keep three things in sync.** The support site shows the
 > **GitHub Release tag** (`<version>` above). Source markers must match it:
 > `README.md` frontmatter `version`, and ESPHome `project_version` in
-> `espcandle.base.yaml`. For `0.2.0` those are already aligned in-tree; create
-> the `v0.2.0` tag/release to publish. Mismatched versions are the most likely
+> `espcandle.base.yaml`. Keep README `version` and `project_version` identical
+> to the release tag (e.g. `0.3.0` ↔ `v0.3.0`). Mismatched versions are the most likely
 > source of confusion here.
 
 ### 3. A notification (`repository_dispatch`) to the support repo
@@ -140,16 +139,16 @@ renamed assets to the release, and fires the dispatch above.
 `soliddifference/support.soliddifference.com` with Contents read/write — see
 above). Without it, the Notify step fails after the bins are already uploaded.
 
-**To ship `v0.2.0`:**
+**To ship `v0.3.0` (or later):**
 
-1. Merge the version + workflow changes to `main`.
-2. Confirm `SUPPORT_SITE_PAT` is set.
+1. Bump `project_version` in `espcandle.base.yaml` and README `version` to match.
+2. Confirm `SUPPORT_SITE_PAT` is set (Contents read/write on the support repo).
 3. Create the release (draft first is fine; publishing triggers the workflow):
 
 ```bash
-gh release create v0.2.0 --title "0.2.0" --notes-file - <<'EOF'
-ESP Candle 0.2.0 — lean ESPHome factory firmware (Preset + Candle/Color/Magic),
-standalone PlatformIO demo, and support-site web flasher integration.
+gh release create v0.3.0 --title "0.3.0" --notes-file - <<'EOF'
+ESP Candle 0.3.0 — master-brightness scenes, Natural preset, candle animation
+fixups, and channel-mix behaviour on static presets.
 See CHANGELOG.md for the full list.
 EOF
 ```
@@ -178,11 +177,12 @@ image and a store link to render the Candle's card.
 
 ## Checklist
 
-- [x] Reconcile version markers (README `0.2.0` / ESPHome `project_version` `0.2.0`)
+- [x] Reconcile version markers (README / ESPHome `project_version` match the tag)
 - [x] Publish workflow (`.github/workflows/publish-firmware.yml`)
 - [x] Repo is public — no `CANDLE_REPO_TOKEN` needed on the support repo
 - [x] Product photo handed over (already in support repo)
-- [ ] `SUPPORT_SITE_PAT` secret created on this repo (cross-org PAT)
-- [ ] GitHub Release `v0.2.0` published (workflow uploads bins + dispatches)
-- [ ] Support-site manifests return 200; Candle card leaves "coming soon"
+- [x] GitHub Release `v0.2.0` published (bins uploaded; support sync may be manual)
+- [ ] `SUPPORT_SITE_PAT` secret created on this repo (cross-org PAT with Contents
+      read/write on `soliddifference/support.soliddifference.com`)
+- [ ] Support-site manifests return 200 for the latest version; Candle card active
 - [ ] Candle store-page URL sent to the support-site maintainer

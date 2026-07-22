@@ -3,7 +3,7 @@ title: ESP32 Candle Firmware
 description: Tea-candle-sized ESP32-S3 LED smart light — Home Assistant via ESPHome (primary) and optional PlatformIO demo.
 tags: [esphome, home-assistant, platformio, hardware-specs, firmware-installation, troubleshooting, led-lighting]
 lastmod: 2026-07-20
-version: 0.2.0
+version: 0.3.0
 ---
 
 # ESP32 Candle Firmware
@@ -18,19 +18,19 @@ A tea candle-sized LED smart light for **Home Assistant via ESPHome**, with an o
 
 ## Home Assistant + ESPHome
 
-The primary firmware path. Provision over Bluetooth or USB (Improv), adopt in Home Assistant with a runtime Noise encryption key — no secrets baked into the binary. Controls: one light, a Preset dropdown, and White / Red / UV level sliders.
+The primary firmware path. Provision over Bluetooth or USB (Improv), adopt in Home Assistant with a runtime Noise encryption key — no secrets baked into the binary. Controls: one light (master brightness for the whole candle), a Preset scene dropdown, and optional White / Red / UV mix sliders for Custom.
 
 ![Home Assistant device controls for ESP Candle](media/ha-device-controls.png)
 
 | Control | Role |
 |---|---|
-| **ESP Candle** | Master on/off for the candle |
-| **Preset** | Off, Warm Glow, Ember, UV Accent, Candle, Color, Magic, Custom |
-| **White / Red / UV** | Config sliders (LEDC); moving one switches Preset to Custom |
+| **ESP Candle** | Master on/off **and** overall brightness (scales RGB + PWM) |
+| **Preset** | Scene: Off, Warm Glow, Natural, Ember, UV Accent, Candle (40%), Color (50%), Magic, Custom |
+| **White / Red / UV** | Mix: under Warm Glow / Natural / UV Accent they tweak that scene in place; under Candle / Color / Magic / Ember they flip Preset to Custom |
 | **Restart / Safe Mode / Factory Reset** | Recovery |
 | **Internal Temperature** | ESP32 core temperature |
 
-Boot button: short-press cycles Warm Glow → Candle → Color → Magic; hold 3–10s then release to toggle; hold 10s for factory reset.
+Boot button: short-press cycles Warm Glow → Natural → Candle → Color → Magic; hold 3–10s then release to toggle; hold 10s for factory reset.
 
 ### End-user setup (no YAML)
 
@@ -233,7 +233,7 @@ Pinout and caps live in `src/config.h`: PWM 5kHz 12-bit; channel caps white 40%,
 
 ## Release History
 
-See [CHANGELOG.md](CHANGELOG.md) for release notes. The next release tag is `v0.2.0` (not published yet; `v0.1.0` is the last tag on GitHub).
+See [CHANGELOG.md](CHANGELOG.md) for release notes. Latest tag: `v0.3.0`.
 
 ## License
 

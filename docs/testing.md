@@ -71,25 +71,26 @@ After a clean boot, the candle is unprovisioned (no Wi-Fi). Adopt it:
    - **Captive portal**: if Wi-Fi fails for ~90s the candle opens a fallback AP — join it and submit credentials at the captive portal page.
 2. **mDNS discovery** — once on Wi-Fi, the candle announces `_esphomelib._tcp.local`. Home Assistant shows it under *Discovered*.
 3. **Adopt** — tap **Configure** in HA. The runtime Noise PSK is generated and stored on the candle automatically (no key to paste).
-4. **Entities** — one light (**ESP Candle**), a **Preset** select, and config numbers for White / Red / UV. Recovery buttons: Restart, Safe Mode, Factory Reset. **Internal Temperature** is enabled; other diagnostics are `disabled_by_default`.
+4. **Entities** — one light (**ESP Candle** = master on/off + brightness), a **Preset** select (scenes with default brightness), and config numbers for White / Red / UV (Custom mix). Recovery buttons: Restart, Safe Mode, Factory Reset. **Internal Temperature** is enabled; other diagnostics are `disabled_by_default`.
 
 ## 4. Effect / preset smoke test (on-device)
 
-The `ESP Candle` light has three custom effects: **Candle**, **Color**, **Magic**. Prefer the **Preset** dropdown (or boot short-press) over raw effect picks.
+The `ESP Candle` light has scene effects: **Warm Glow**, **Natural**, **Ember**, **UV Accent**, **Candle**, **Color**, **Magic**. Prefer the **Preset** dropdown (or boot short-press) over raw effect picks.
 
-1. Turn the light on from HA with Preset **Off** — it should start **Candle** without a bright white flash. The light toggle stays the master off switch.
-2. **Candle**: warm whites flicker organically (Perlin noise), red ember glows inverse to flame brightness, RGB strip off. Sub-modes cycle every 4–20s.
-3. **Color**: RGB strip shows a slowly drifting hue spread; whites/UV/red off.
-4. **Magic**: RGB strip alternates dim purple/blue drift and brighter sparks; UV on; red drifts; whites off.
-5. **Presets**: try Warm Glow (dim static; light entity stays ON) / Ember (slow red flicker) / UV Accent. Light toggle Off should extinguish everything and set Preset to Off. Moving a channel slider should flip Preset to **Custom**.
-6. **Button**: short-press cycles Warm Glow → Candle → Color → Magic → …. Hold 3–10s then release to toggle on/off. Hold 10s to factory-reset.
+1. Turn the light on from HA with Preset **Off** — it should start **Candle** at ~40% brightness without a bright white flash. The light toggle stays the master off switch.
+2. **Candle**: warm whites flicker organically, red ember inverse to flame; RGB off. Master slider dims the whole scene; slider should sit near 40% on entry.
+3. **Color**: HSV drift on the strip; entry brightness ~50%. Master slider scales the strip.
+4. **Natural**: static warm whites + soft orange-white RGB, no animation; entry ~50%. Moving the master slider scales both proportionally.
+5. **Presets**: Warm Glow / Ember / UV Accent also set a default master %. On Warm Glow / Natural / UV Accent, channel sliders tweak mix in place (master / RGB scene tint stay put). On Candle / Color / Magic / Ember, a channel slider flips Preset to **Custom** and stops the scene effect. Light toggle Off extinguishes everything and sets Preset to Off.
+6. **Regression — mix vs master**: UV Accent → move **UV Intensity** only — Preset stays UV Accent, master slider unchanged, purple RGB tint stays. Natural → move **White Brightness** only — Preset stays Natural, master unchanged, warm RGB tint stays. Master slider on either preset should dim PWM and RGB together.
+7. **Button**: short-press cycles Warm Glow → Natural → Candle → Color → Magic → …. Hold 3–10s then release to toggle on/off. Hold 10s to factory-reset.
 
 ### If an effect looks wrong
 
-The custom engine lives in `esphome/includes/candle_effects.h`. Tunables are grouped per effect (`candle::`, `color::`, `magic::` namespaces), mirroring `src/config.h`. Adjust and re-run `make factory-run`. Common issues:
+The custom engine lives in `esphome/includes/candle_effects.h`. Tunables are grouped per effect (`candle::`, `color::`, `magic::`, `natural::`, …), mirroring `src/config.h`. Adjust and re-run `make factory-run`. Common issues:
 
-- **Too dim / too bright** — adjust `brightness` (per sub-mode) or the `max_power` on the `ledc` outputs in the YAML.
-- **Flicker too fast/slow** — adjust `speed`/`speed2`/`smoothing` in the relevant sub-mode `SubParams`.
+- **Too dim / too bright overall** — use the **ESP Candle** brightness slider (presets set a default; they no longer force 100%).
+- **Candle flicker too harsh** — adjust `smoothing` / `depth` / snuff constants in `candle::`.
 - **Red ember too strong** — adjust `RED_MIN` / `RED_MAX` / `RED_CURVE`.
 - **Effect not applying to a channel** — check `id(pwm_led_N)` in the effect header; only effects / Preset / numbers should call `set_level` (no competing light wrappers).
 

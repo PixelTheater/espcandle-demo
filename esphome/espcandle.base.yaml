@@ -22,9 +22,9 @@
 #   - accepts OTA updates from Home Assistant or the ESPHome CLI
 #
 # Only ONE light is exposed to Home Assistant by default: "ESP Candle" (the
-# RGB strip) with Candle / Color / Magic effects. Warm white, UV, and deep red
-# are driven via ledc outputs — exposed as config number sliders and a Preset
-# select, not as separate light tiles. See docs/modders.md.
+# RGB strip + master brightness for PWM). Presets are scenes (effect + default
+# brightness). Warm white, UV, and deep red are driven via ledc — config
+# number sliders for Custom mix. See docs/modders.md.
 
 substitutions:
   name: esp32-candle
@@ -32,7 +32,7 @@ substitutions:
   room: ""
   device_description: "ESP32-S3 powered smart tea candle (RGB + warm white + UV + deep red)"
   project_name: "PixelTheater.ESP Candle"
-  project_version: "0.2.0"
+  project_version: "0.3.0"
 
   # Logging level: NONE, ERROR, WARN, INFO (default), DEBUG, VERBOSE, VERY_VERBOSE
   log_level: "INFO"
@@ -151,12 +151,12 @@ output:
   - platform: ledc
     pin: ${white1_pin}
     id: pwm_led_1
-    frequency: "300Hz"
+    frequency: "5000Hz"
     max_power: ${white_max_power}
   - platform: ledc
     pin: ${white2_pin}
     id: pwm_led_2
-    frequency: "300Hz"
+    frequency: "5000Hz"
     max_power: ${white_max_power}
   - platform: ledc
     pin: ${uv_pin}
@@ -175,9 +175,12 @@ globals:
     initial_value: "false"
 
 # -- Lights -----------------------------------------------------------------
-# Primary HA light = RGB strip. Effects also drive PWM via ledc.
-# The light entity is the master on/off: every producing Preset leaves it ON
-# (Warm Glow uses black RGB + PWM). Toggle Off clears PWM and sets Preset Off.
+# Primary HA light = RGB strip + master brightness for the whole candle.
+# Presets are scenes: effect engine + default master %. Effects (including
+# static Natural / Warm Glow / UV Accent) scale PWM by brightness×state;
+# addressable RGB is scaled by ESPHome color correction the same way.
+# Channel numbers (White/Red/UV): under static scenes they tweak mix in-place;
+# under animated scenes they flip Preset to Custom. Light toggle = master off.
 light:
   - platform: esp32_rmt_led_strip
     id: rgb_strip
@@ -194,13 +197,28 @@ light:
     gamma_correct: 1.0
     effects:
       - addressable_lambda:
+          name: Warm Glow
+          update_interval: 100ms
+          lambda: |-
+            espcandle::warm_glow::tick(it, initial_run);
+      - addressable_lambda:
+          name: Natural
+          update_interval: 100ms
+          lambda: |-
+            espcandle::natural::tick(it, initial_run);
+      - addressable_lambda:
           name: Ember
           update_interval: 50ms
           lambda: |-
             espcandle::ember::tick(it, initial_run);
       - addressable_lambda:
+          name: UV Accent
+          update_interval: 100ms
+          lambda: |-
+            espcandle::uv_accent::tick(it, initial_run);
+      - addressable_lambda:
           name: Candle
-          update_interval: 50ms
+          update_interval: 20ms
           lambda: |-
             espcandle::candle::tick(it, initial_run);
       - addressable_lambda:
@@ -222,18 +240,17 @@ light:
           if (opt.empty())
             return;
 
-          // Custom: leave the user's RGB/effect alone (no blank / re-apply).
+          // Custom: leave the user's RGB/effect/brightness alone.
           if (opt == "Custom")
             return;
 
-          // HA's toggle often arrives as full white — blank immediately, then
-          // apply the preset so the strip never sits on a bright default frame.
+          // Re-apply the current preset (restores its default master %).
+          // Do not force brightness to 1.0 here — that caused the "shoots up" bug.
           id(applying_preset) = true;
           {
             auto blank = id(rgb_strip).turn_on();
             blank.set_effect("None");
             blank.set_rgb(0.0f, 0.0f, 0.0f);
-            blank.set_brightness(1.0f);
             blank.perform();
           }
           id(applying_preset) = false;
@@ -266,12 +283,18 @@ light:
             - select.set:
                 id: candle_preset
                 option: "Off"
+    on_state:
+      # Custom mix: remaster PWM when HA brightness/on changes (effect is off).
+      - lambda: |-
+          if (id(applying_preset))
+            return;
+          if (id(candle_preset).current_option() != "Custom")
+            return;
+          espcandle::apply_custom_pwm();
 
 # -- Presets ----------------------------------------------------------------
-# Primary control alongside the light. Short-press cycles Warm Glow / Candle /
-# Color / Magic. HA can also pick Off, Ember, UV Accent, Custom.
-# Selecting any producing preset turns the light entity ON so the toggle can
-# always turn everything off.
+# Each producing preset is a scene: effect + default master brightness.
+# Short-press cycles Warm Glow → Natural → Candle → Color → Magic.
 select:
   - platform: template
     name: "Preset"
@@ -283,6 +306,7 @@ select:
     options:
       - "Off"
       - "Warm Glow"
+      - "Natural"
       - "Ember"
       - "UV Accent"
       - "Candle"
@@ -297,56 +321,60 @@ select:
             id(red_level).publish_state(red_pct);
             id(uv_level).publish_state(uv_pct);
           };
-          auto set_pwm = [](float w, float r, float uv) {
-            id(pwm_led_1).set_level(w);
-            id(pwm_led_2).set_level(w);
-            id(pwm_led_4).set_level(r);
-            id(pwm_led_3).set_level(uv);
-          };
-          // Turn light ON with black RGB first so HA never shows a white flash
-          // before an effect paints the strip.
-          auto soft_effect = [](const char *effect) {
+          // Scene apply: turn on, set master brightness, start effect.
+          // Effects scale all channels by brightness×state (master_level).
+          auto soft_effect = [](const char *effect, float brightness) {
             auto rgb = id(rgb_strip).turn_on();
             rgb.set_rgb(0.0f, 0.0f, 0.0f);
-            rgb.set_brightness(1.0f);
+            rgb.set_brightness(brightness);
             rgb.set_effect(effect);
             rgb.perform();
           };
 
           if (x == "Off") {
-            set_pwm(0.0f, 0.0f, 0.0f);
+            id(pwm_led_1).set_level(0.0f);
+            id(pwm_led_2).set_level(0.0f);
+            id(pwm_led_3).set_level(0.0f);
+            id(pwm_led_4).set_level(0.0f);
             sync_levels(0, 0, 0);
             id(rgb_strip).turn_off().perform();
           } else if (x == "Warm Glow") {
-            // PWM-only look; keep light entity ON (black RGB) so toggle can Off.
-            set_pwm(0.10f, 0.40f, 0.0f);
+            // Mix shown as % of channel at master=100%; default master 60%.
             sync_levels(10, 40, 0);
-            soft_effect("None");
+            soft_effect("Warm Glow", 0.60f);
+          } else if (x == "Natural") {
+            // White mix 100% × master 50% → 50% whites; RGB warm tint ~30%.
+            sync_levels(100, 0, 0);
+            soft_effect("Natural", 0.50f);
           } else if (x == "Ember") {
             sync_levels(2, 10, 0);
-            soft_effect("Ember");
+            soft_effect("Ember", 0.45f);
           } else if (x == "UV Accent") {
-            set_pwm(0.0f, 0.0f, 0.50f);
             sync_levels(0, 0, 50);
-            auto rgb = id(rgb_strip).turn_on();
-            rgb.set_effect("None");
-            rgb.set_rgb(0.06f, 0.0f, 0.18f);
-            rgb.set_brightness(0.125f);
-            rgb.perform();
+            soft_effect("UV Accent", 0.40f);
           } else if (x == "Candle") {
-            sync_levels(0, 0, 0);
-            soft_effect("Candle");
+            sync_levels(0, 0, 0);  // effect owns PWM
+            soft_effect("Candle", 0.40f);
           } else if (x == "Color") {
             sync_levels(0, 0, 0);
-            soft_effect("Color");
+            soft_effect("Color", 0.50f);
           } else if (x == "Magic") {
             sync_levels(0, 0, 0);
-            soft_effect("Magic");
+            soft_effect("Magic", 0.45f);
+          } else if (x == "Custom") {
+            // Manual mix: stop scene effect so channel sliders own PWM;
+            // keep current brightness; remaster PWM from number states.
+            auto rgb = id(rgb_strip).turn_on();
+            rgb.set_effect("None");
+            rgb.perform();
+            espcandle::apply_custom_pwm();
           }
-          // "Custom" leaves current levels/effect alone
           id(applying_preset) = false;
 
 # -- Channel levels (HA Configuration section) ------------------------------
+# Mix controls. Static scenes (Warm Glow / Natural / UV Accent) keep the
+# preset and feed mix into the effect — master / RGB scene tint stay put.
+# Animated scenes (Candle / Color / Magic / Ember) flip to Custom.
 number:
   - platform: template
     name: "White Brightness"
@@ -362,14 +390,15 @@ number:
     restore_value: true
     set_action:
       - lambda: |-
-          float w = x / 100.0f;
-          id(pwm_led_1).set_level(w);
-          id(pwm_led_2).set_level(w);
-          if (!id(applying_preset) && id(candle_preset).current_option() != "Custom") {
+          auto preset = std::string(id(candle_preset).current_option().c_str());
+          if (!id(applying_preset) && espcandle::is_animated_preset(preset)) {
             auto call = id(candle_preset).make_call();
             call.set_option("Custom");
             call.perform();
           }
+          // Static scenes: effect tick applies mix × master. Custom: write now.
+          if (id(candle_preset).current_option() == "Custom")
+            espcandle::apply_custom_pwm();
 
   - platform: template
     name: "Red Intensity"
@@ -385,12 +414,14 @@ number:
     restore_value: true
     set_action:
       - lambda: |-
-          id(pwm_led_4).set_level(x / 100.0f);
-          if (!id(applying_preset) && id(candle_preset).current_option() != "Custom") {
+          auto preset = std::string(id(candle_preset).current_option().c_str());
+          if (!id(applying_preset) && espcandle::is_animated_preset(preset)) {
             auto call = id(candle_preset).make_call();
             call.set_option("Custom");
             call.perform();
           }
+          if (id(candle_preset).current_option() == "Custom")
+            espcandle::apply_custom_pwm();
 
   - platform: template
     name: "UV Intensity"
@@ -406,12 +437,14 @@ number:
     restore_value: true
     set_action:
       - lambda: |-
-          id(pwm_led_3).set_level(x / 100.0f);
-          if (!id(applying_preset) && id(candle_preset).current_option() != "Custom") {
+          auto preset = std::string(id(candle_preset).current_option().c_str());
+          if (!id(applying_preset) && espcandle::is_animated_preset(preset)) {
             auto call = id(candle_preset).make_call();
             call.set_option("Custom");
             call.perform();
           }
+          if (id(candle_preset).current_option() == "Custom")
+            espcandle::apply_custom_pwm();
 
 # -- Boot button ------------------------------------------------------------
 binary_sensor:
@@ -433,14 +466,14 @@ binary_sensor:
     filters:
       - delayed_on_off: 20ms
     on_multi_click:
-      # Short press: cycle Warm Glow → Candle → Color → Magic → …
+      # Short press: cycle Warm Glow → Natural → Candle → Color → Magic → …
       - timing:
           - ON for at most 1s
           - OFF for at least 0.2s
         then:
           - lambda: |-
-              static const char *cycle[] = {"Warm Glow", "Candle", "Color", "Magic"};
-              constexpr int n = 4;
+              static const char *cycle[] = {"Warm Glow", "Natural", "Candle", "Color", "Magic"};
+              constexpr int n = 5;
               auto cur = id(candle_preset).current_option();
               int next = 0;
               for (int i = 0; i < n; i++) {

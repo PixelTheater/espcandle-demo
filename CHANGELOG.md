@@ -6,6 +6,36 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-22
+
+### Added
+
+- **Natural** preset/effect: static warm whites + soft orange-white RGB tint;
+  scales with the master brightness slider.
+- Warm Glow and UV Accent as static scene effects (not one-shot PWM writes) so
+  they track the master slider like other presets.
+- Master-brightness architecture: each producing preset sets a default master
+  % (Candle 40%, Color 50%, Natural 50%, Magic/Ember 45%, Warm Glow 60%,
+  UV Accent 40%) instead of forcing 100%.
+
+### Changed
+
+- Candle animation: mid-band value noise + hermite smoothstep, white peaks
+  aligned with standalone (`÷ white_max_power`), time-based soft snuffs,
+  exponential smoothing, 20 ms tick; white PWM frequency 5 kHz (was 300 Hz).
+- Boot button cycle: Warm Glow → Natural → Candle → Color → Magic.
+- On static scenes (Warm Glow / Natural / UV Accent), White / Red / UV sliders
+  tweak mix in place without leaving the preset or changing master / RGB tint.
+- On animated scenes (Candle / Color / Magic / Ember), channel sliders still
+  flip Preset to **Custom** and stop the scene effect; Custom remasters PWM
+  from number states when brightness changes.
+
+### Fixed
+
+- Moving UV / White on UV Accent or Natural no longer stops the scene and
+  drops RGB (was flipping to Custom and clearing the strip tint).
+- Preset entry no longer forces brightness to 100% (the “shoots up” jump).
+
 ## [0.2.0] - 2026-07-20
 
 ### Added
@@ -95,6 +125,7 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 - Remove older per-candle ESPHome example/config files that were superseded by the shared base and per-device template.
 
-[Unreleased]: https://github.com/PixelTheater/espcandle-demo/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/PixelTheater/espcandle-demo/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.3.0
 [0.2.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.2.0
 [0.1.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.1.0

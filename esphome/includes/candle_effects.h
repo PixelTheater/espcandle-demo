@@ -16,13 +16,16 @@
 #pragma once
 
 #include "esphome.h"
+#include <cmath>
 
 namespace espcandle {
 
 // ---------------------------------------------------------------------------
-// Self-contained 1D value noise (replaces FastLED inoise8, which is not linked
-// when using esp32_rmt_led_strip). Returns 0..255. Cheap hash + linear interp;
-// good enough for organic flame flicker.
+// Self-contained 1D gradient noise (replaces FastLED inoise8, which is not
+// linked with esp32_rmt_led_strip). Lattice values are biased into ~64..192
+// like inoise8, then sample_noise() expands to 0..255 — same mapping as
+// standalone src/main.cpp. Hermite smoothstep avoids the linear-lerp look
+// that read as "slow random fades".
 // ---------------------------------------------------------------------------
 inline uint32_t hash31(uint32_t x) {
   x ^= x >> 16; x *= 0x7feb352dU;
@@ -30,15 +33,21 @@ inline uint32_t hash31(uint32_t x) {
   x ^= x >> 16;
   return x;
 }
+// One lattice corner in the inoise8-like mid band (~64..192).
+inline uint8_t noise_lattice(uint32_t i) {
+  return (uint8_t)(64 + ((hash31(i) >> 16) * 128) / 255);
+}
 inline uint8_t noise8(uint32_t t) {
   uint32_t i = t >> 8;          // integer cell
   uint32_t f = t & 0xff;        // frac 0..255
-  uint8_t a = (hash31(i) >> 16);
-  uint8_t b = (hash31(i + 1) >> 16);
-  return a + (int16_t(b) - int16_t(a)) * int16_t(f) / 255;
+  uint8_t a = noise_lattice(i);
+  uint8_t b = noise_lattice(i + 1);
+  // Hermite smoothstep: 3u^2 - 2u^3
+  float u = f / 255.0f;
+  u = u * u * (3.0f - 2.0f * u);
+  return (uint8_t)(a + (int16_t(b) - int16_t(a)) * u);
 }
-// Rescale from the ~64..192 cluster around 128 up to a fuller 0..255 swing,
-// matching the standalone firmware's sampleNoise() mapping.
+// Rescale mid-band noise to a fuller 0..255 swing (standalone sampleNoise).
 inline uint8_t sample_noise(uint32_t t) {
   int raw = (int) noise8(t);
   raw = (raw - 64) * 255 / 128;
@@ -50,12 +59,92 @@ inline uint8_t sample_noise(uint32_t t) {
 // Convenience: clamp to 0..1.
 inline float clampf(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
 
+// Master level from the RGB light entity (HA brightness × on/off).
+// Addressable RGB already gets this via color correction; PWM channels we
+// drive with set_level() must multiply by it explicitly.
+inline float master_level() {
+  const auto &v = id(rgb_strip).current_values;
+  return clampf(v.get_brightness() * v.get_state());
+}
+
 // Random integer in [lo, hi). ESPHome under ESP-IDF exposes the no-arg C
 // random(), not Arduino's random(min,max), so wrap esphome::random_uint32().
 inline int rnd(int lo, int hi) {
   if (hi <= lo) return lo;
   return lo + (int) (esphome::random_uint32() % (uint32_t) (hi - lo));
 }
+
+// Shared PWM write scaled by master brightness.
+inline void set_pwm_mastered(float white, float red, float uv) {
+  float m = master_level();
+  id(pwm_led_1).set_level(clampf(white * m));
+  id(pwm_led_2).set_level(clampf(white * m));
+  id(pwm_led_4).set_level(clampf(red * m));
+  id(pwm_led_3).set_level(clampf(uv * m));
+}
+
+// Mix % from HA channel numbers (0–100). Static scenes read these each tick
+// so White/Red/UV sliders can tweak mix without leaving the preset / touching
+// master brightness (which would also scale RGB via color correction).
+inline void pwm_from_numbers() {
+  set_pwm_mastered(id(white_level).state / 100.0f, id(red_level).state / 100.0f,
+                   id(uv_level).state / 100.0f);
+}
+
+// Animated scenes own their PWM; channel sliders flip these to Custom.
+inline bool is_animated_preset(const std::string &preset) {
+  return preset == "Candle" || preset == "Color" || preset == "Magic" ||
+         preset == "Ember";
+}
+
+// Apply current White/Red/UV number states × master (Custom mode / on_state).
+inline void apply_custom_pwm() { pwm_from_numbers(); }
+
+// ===========================================================================
+// NATURAL - static warm scene. Whites/red/UV from channel numbers × master;
+// RGB is a fixed orange-white tint (color-corrected by master). At default
+// entry (white=100%, master=50%) whites read ~50% and the strip ~30%.
+// ===========================================================================
+namespace natural {
+  // V=153 ≈ 0.6; color correction × master 0.5 → ~30% perceived strip level.
+  static constexpr uint8_t RGB_H = 28;   // warm amber / candle-orange
+  static constexpr uint8_t RGB_S = 90;   // soft, not neon
+  static constexpr uint8_t RGB_V = 153;
+
+  inline void tick(esphome::light::AddressableLight &it, bool initial) {
+    (void) initial;
+    pwm_from_numbers();
+    it.all() = esphome::light::ESPHSVColor(RGB_H, RGB_S, RGB_V);
+  }
+}  // namespace natural
+
+// ===========================================================================
+// WARM GLOW - static PWM ember (dim whites + red). RGB off. Tracks master.
+// Default mix 10% / 40% at master 60% (scene entry values).
+// ===========================================================================
+namespace warm_glow {
+  inline void tick(esphome::light::AddressableLight &it, bool initial) {
+    (void) initial;
+    pwm_from_numbers();
+    it.all() = esphome::Color(0, 0, 0);
+  }
+}  // namespace warm_glow
+
+// ===========================================================================
+// UV ACCENT - static UV wash + faint purple RGB tint. Tracks master.
+// Default mix UV=50% at master 40%. Channel sliders change mix only.
+// ===========================================================================
+namespace uv_accent {
+  static constexpr uint8_t RGB_H = 192;
+  static constexpr uint8_t RGB_S = 220;
+  static constexpr uint8_t RGB_V = 40;
+
+  inline void tick(esphome::light::AddressableLight &it, bool initial) {
+    (void) initial;
+    pwm_from_numbers();
+    it.all() = esphome::light::ESPHSVColor(RGB_H, RGB_S, RGB_V);
+  }
+}  // namespace uv_accent
 
 // ===========================================================================
 // CANDLE - Perlin-noise flame simulation across the warm whites + red ember.
@@ -87,21 +176,31 @@ namespace candle {
   static constexpr float SPLIT_DEPTH_CALM    = 0.50f;
   static constexpr float SPLIT_DEPTH_FLICKER = 0.25f;
 
-  // Snuff events (flicker only): one white channel briefly dips near zero.
-  static constexpr int   SNUFF_CHANCE  = 2;     // per 1000 per tick
-  static constexpr float SNUFF_DEPTH  = 0.97f;
-  static constexpr float SNUFF_RECOVER = 0.08f;
+  // Snuff events (flicker only): brief soft dip — not a hard black flash.
+  // Rate is time-based (~1 attempt/sec/channel). Trigger and recover are
+  // separate so a single tick does not erase the dip.
+  static constexpr float SNUFF_PER_SEC = 1.0f;
+  static constexpr float SNUFF_DEPTH   = 0.45f;  // dip to ~55% (was 3% — too glitchy)
+  static constexpr float SNUFF_RECOVER = 0.035f; // slower recover = softer edge
+
+  // white_max_power on the ledc outputs (must match espcandle.base.yaml).
+  // Standalone writes absolute fractions of MAX_DUTY; ESPHome set_level is
+  // relative to max_power, so divide by WHITE_MAX to restore the same watts.
+  static constexpr float WHITE_MAX = 0.40f;
 
   // Per-sub-mode brightness/depth/speed/smoothing.
-  // Brightness ~15% below the original port (still reads as a tea-light flame).
+  // Speeds match standalone (tempo); smoothing rates are lower so steep
+  // noise edges lag instead of flashing. Depths slightly softer than
+  // standalone so the floor is not near-black.
+  // Brightness peaks match src/config.h (0.07 / 0.11 / 0.13 of full duty).
   struct SubParams {
     float brightness, depth, speed, speed2, octave2, smoothing;
   };
-  static constexpr SubParams CALM    { 0.06f, 0.60f, 0.018f, 0.07f, 0.35f, 0.06f };
-  static constexpr SubParams FLICKER { 0.09f, 0.75f, 0.14f,  0.60f, 0.35f, 0.18f };
-  static constexpr SubParams WIND    { 0.11f, 0.92f, 0.28f,  1.20f, 0.50f, 0.22f };
+  static constexpr SubParams CALM    { 0.07f / WHITE_MAX, 0.50f, 0.018f, 0.07f, 0.30f, 0.030f };
+  static constexpr SubParams FLICKER { 0.11f / WHITE_MAX, 0.55f, 0.14f,  0.60f, 0.22f, 0.045f };
+  static constexpr SubParams WIND    { 0.13f / WHITE_MAX, 0.72f, 0.28f,  1.20f, 0.35f, 0.065f };
   static constexpr float WIND_GUST_SPEED = 0.006f;
-  static constexpr float WIND_GUST_DEPTH  = 0.85f;
+  static constexpr float WIND_GUST_DEPTH  = 0.70f;
 
   enum class Sub : uint8_t { CALM, FLICKER, WIND };
 
@@ -112,7 +211,8 @@ namespace candle {
     unsigned long xfade_end = 0;
     float t_fast = 0, t_fast2 = 0, t_gust = 0, t_w1 = 0, t_w2 = 0;
     float snuff_w1 = 1.0f, snuff_w2 = 1.0f;
-    float out_w1 = 0.08f, out_w2 = 0.08f, out_red = 0.05f;
+    // Initial levels as set_level (absolute 0.08 / WHITE_MAX), matching enterCandleMode.
+    float out_w1 = 0.08f / WHITE_MAX, out_w2 = 0.08f / WHITE_MAX, out_red = 0.05f;
     unsigned long last = 0;
   };
   static State s;
@@ -153,7 +253,8 @@ namespace candle {
       s.t_gust = rnd(0, 10000);
       s.t_w1 = rnd(0, 10000); s.t_w2 = rnd(20000, 40000);
       s.snuff_w1 = s.snuff_w2 = 1.0f;
-      s.out_w1 = s.out_w2 = 0.08f; s.out_red = 0.05f;
+      s.out_w1 = s.out_w2 = 0.08f / WHITE_MAX;
+      s.out_red = 0.05f;
       s.last = millis();
     }
     unsigned long now = millis();
@@ -200,39 +301,49 @@ namespace candle {
     float target_w1 = clampf(cur_level * (1.0f + split * (w1n - 0.5f) * 2.0f));
     float target_w2 = clampf(cur_level * (1.0f + split * (w2n - 0.5f) * 2.0f));
 
-    // Snuff events (flicker only).
+    // Snuff events (flicker only) — time-based trigger; recover on later ticks.
+    auto snuff_tick = [&](float &snuff) {
+      if (snuff >= 1.0f) {
+        // Approx Poisson: chance ≈ rate * dt (capped). Scale uses 10000 for resolution.
+        int threshold = (int)(SNUFF_PER_SEC * 10.0f * dtf);
+        if (threshold > 0 && rnd(0, 10000) < threshold)
+          snuff = 1.0f - SNUFF_DEPTH;
+      } else {
+        float a = 1.0f - expf(-SNUFF_RECOVER * dtf);
+        snuff += (1.0f - snuff) * clampf(a);
+        if (snuff > 0.999f) snuff = 1.0f;
+      }
+    };
     if (s.sub == Sub::FLICKER) {
-      if (s.snuff_w1 < 1.0f || rnd(0, 1000) < SNUFF_CHANCE) {
-        if (s.snuff_w1 >= 1.0f) s.snuff_w1 = 1.0f - SNUFF_DEPTH;
-        s.snuff_w1 += (1.0f - s.snuff_w1) * clampf(SNUFF_RECOVER * dtf);
-      }
-      if (s.snuff_w2 < 1.0f || rnd(0, 1000) < SNUFF_CHANCE) {
-        if (s.snuff_w2 >= 1.0f) s.snuff_w2 = 1.0f - SNUFF_DEPTH;
-        s.snuff_w2 += (1.0f - s.snuff_w2) * clampf(SNUFF_RECOVER * dtf);
-      }
-    } else { s.snuff_w1 = s.snuff_w2 = 1.0f; }
+      snuff_tick(s.snuff_w1);
+      snuff_tick(s.snuff_w2);
+    } else {
+      s.snuff_w1 = s.snuff_w2 = 1.0f;
+    }
     target_w1 *= s.snuff_w1;
     target_w2 *= s.snuff_w2;
 
-    // Red ember: inverse curve over its own cap, scaled to fraction of MAX_DUTY.
+    // Red ember: inverse curve over its own cap; max_power (80%) applies the rest.
     float peak = params(s.sub).brightness;
     float dimness = 1.0f - clampf(cur_level / peak);
     float red_of_cap = RED_MIN + (RED_MAX - RED_MIN) * powf(dimness, RED_CURVE);
-    float target_red = red_of_cap;  // red ledc output already caps via max_power
+    float target_red = red_of_cap;
 
-    // Exponential smoothing.
-    float alpha = clampf(p.smoothing * dtf);
+    // Continuous-time exponential smoothing — lower rates keep tempo but
+    // round off steep high↔low edges so flicker does not look glitchy.
+    float alpha = 1.0f - expf(-p.smoothing * dtf);
     s.out_w1  += (target_w1  - s.out_w1)  * alpha;
     s.out_w2  += (target_w2  - s.out_w2)  * alpha;
     s.out_red += (target_red - s.out_red) * alpha;
 
-    // Drive channels. ledc set_level takes 0..1; max_power applies the cap.
-    id(pwm_led_1).set_level(clampf(s.out_w1));
-    id(pwm_led_2).set_level(clampf(s.out_w2));
-    id(pwm_led_4).set_level(clampf(s.out_red));
+    // Drive channels, scaled by the light's HA brightness slider.
+    float master = master_level();
+    id(pwm_led_1).set_level(clampf(s.out_w1 * master));
+    id(pwm_led_2).set_level(clampf(s.out_w2 * master));
+    id(pwm_led_4).set_level(clampf(s.out_red * master));
     id(pwm_led_3).set_level(0.0f);  // UV off in candle mode
 
-    // RGB strip off.
+    // RGB strip off (correction still applies master to blacks — fine).
     it.all() = esphome::Color(0, 0, 0);
   }
 }  // namespace candle
@@ -284,9 +395,10 @@ namespace ember {
     s.out_red += (target_red - s.out_red) * alpha;
     s.out_w   += (target_w   - s.out_w)   * alpha;
 
-    id(pwm_led_1).set_level(clampf(s.out_w));
-    id(pwm_led_2).set_level(clampf(s.out_w * 0.85f));
-    id(pwm_led_4).set_level(clampf(s.out_red));
+    float master = master_level();
+    id(pwm_led_1).set_level(clampf(s.out_w * master));
+    id(pwm_led_2).set_level(clampf(s.out_w * 0.85f * master));
+    id(pwm_led_4).set_level(clampf(s.out_red * master));
     id(pwm_led_3).set_level(0.0f);
     it.all() = esphome::Color(0, 0, 0);
   }
@@ -302,8 +414,10 @@ namespace color {
   // ~1/4 of the original port speeds; direction can reverse.
   static constexpr float SPEED_MIN = 0.0005f;
   static constexpr float SPEED_MAX = 0.030f;
+  // Write at full V so the light entity's brightness slider is the master
+  // (ESPHome color-corrects addressable pixels by brightness × state).
   static constexpr int   SATURATION = 240;
-  static constexpr int   BRIGHTNESS = 150;
+  static constexpr int   BRIGHTNESS = 255;
   // Stretch hues along the strip (look further back in history per LED).
   static constexpr int   SPATIAL_STRETCH = 3;
   static constexpr unsigned long REVERSE_MIN_MS = 12000;
@@ -410,9 +524,11 @@ namespace magic {
   static constexpr unsigned long DRIFT_MIN = 3000, DRIFT_MAX = 28000;
   static constexpr unsigned long SPARK_MIN  = 400, SPARK_MAX  = 14000;
   static constexpr float LED_SPEED_MIN = 0.002f, LED_SPEED_MAX = 0.028f;
-  static constexpr int   DRIFT_BRIGHTNESS = 38;
-  static constexpr int   DRIFT_RIPPLE     = 16;
-  static constexpr int   SPARK_BRI_MIN    = 170, SPARK_BRI_MAX = 230;
+  // Drift V is intentionally low vs sparks; light brightness scales both via
+  // color correction. Keep headroom so the HA slider still has useful range.
+  static constexpr int   DRIFT_BRIGHTNESS = 55;
+  static constexpr int   DRIFT_RIPPLE     = 22;
+  static constexpr int   SPARK_BRI_MIN    = 200, SPARK_BRI_MAX = 255;
   static constexpr int   SPARK_HUE_SPREAD = 36;
   static constexpr float RED_STEP = 0.000006f, RED_DAMP = 0.985f;
   static constexpr float RED_CENTRE = 0.45f, RED_PULL = 0.000008f;
@@ -512,8 +628,9 @@ namespace magic {
     s.red_level += s.red_vel * dtf;
     if (s.red_level < RED_MIN) s.red_level = RED_MIN;
     if (s.red_level > RED_MAX) s.red_level = RED_MAX;
-    id(pwm_led_4).set_level(s.red_level);
-    id(pwm_led_3).set_level(0.55f);
+    float master = master_level();
+    id(pwm_led_4).set_level(clampf(s.red_level * master));
+    id(pwm_led_3).set_level(clampf(0.55f * master));
 
     if (s.phase == Phase::DRIFT) {
       for (int i = 0; i < n; i++) {
