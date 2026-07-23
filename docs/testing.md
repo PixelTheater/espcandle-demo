@@ -75,15 +75,16 @@ After a clean boot, the candle is unprovisioned (no Wi-Fi). Adopt it:
 
 ## 4. Effect / preset smoke test (on-device)
 
-The `ESP Candle` light has scene effects: **Warm Glow**, **Natural**, **Ember**, **UV Accent**, **Candle**, **Color**, **Magic**. Prefer the **Preset** dropdown (or boot short-press) over raw effect picks.
+The `ESP Candle` light has scene effects: **Warm Glow**, **Natural**, **Ember**, **UV Accent**, **Candle**, **Wifi RSSI**, **Color**, **Magic**. Prefer the **Preset** dropdown (or boot short-press) over raw effect picks.
 
 1. Turn the light on from HA with Preset **Off** — it should start **Candle** at ~40% brightness without a bright white flash. The light toggle stays the master off switch.
-2. **Candle**: warm whites flicker organically, red ember inverse to flame; RGB off. Master slider dims the whole scene; slider should sit near 40% on entry.
-3. **Color**: HSV drift on the strip; entry brightness ~50%. Master slider scales the strip.
-4. **Natural**: static warm whites + soft orange-white RGB, no animation; entry ~50%. Moving the master slider scales both proportionally.
-5. **Presets**: Warm Glow / Ember / UV Accent also set a default master %. On Warm Glow / Natural / UV Accent, channel sliders tweak mix in place (master / RGB scene tint stay put). On Candle / Color / Magic / Ember, a channel slider flips Preset to **Custom** and stops the scene effect. Light toggle Off extinguishes everything and sets Preset to Off.
-6. **Regression — mix vs master**: UV Accent → move **UV Intensity** only — Preset stays UV Accent, master slider unchanged, purple RGB tint stays. Natural → move **White Brightness** only — Preset stays Natural, master unchanged, warm RGB tint stays. Master slider on either preset should dim PWM and RGB together.
-7. **Button**: short-press cycles Warm Glow → Natural → Candle → Color → Magic → …. Hold 3–10s then release to toggle on/off. Hold 10s to factory-reset.
+2. **Candle**: warm whites flicker organically, red ember inverse to flame; RGB off. Master slider dims the whole scene; slider should sit near 40% on entry. Nearby RF motion may gently nudge wind/snuff.
+3. **Wifi RSSI**: steady white level tracks absolute WiFi signal (−88 dBm ≈ dim, −42 dBm ≈ bright). Red fades in below ~40% signal; RGB strip glows green above ~55%. No flicker. Master defaults to ~70%.
+4. **Color**: HSV drift on the strip; entry brightness ~50%. Master slider scales the strip.
+5. **Natural**: static warm whites + soft orange-white RGB, no animation; entry ~50%. Moving the master slider scales both proportionally.
+6. **Presets**: Warm Glow / Ember / UV Accent also set a default master %. On Warm Glow / Natural / UV Accent, channel sliders tweak mix in place (master / RGB scene tint stay put). On Candle / Wifi RSSI / Color / Magic / Ember, a channel slider flips Preset to **Custom** and stops the scene effect. Light toggle Off extinguishes everything and sets Preset to Off.
+7. **Regression — mix vs master**: UV Accent → move **UV Intensity** only — Preset stays UV Accent, master slider unchanged, purple RGB tint stays. Natural → move **White Brightness** only — Preset stays Natural, master unchanged, warm RGB tint stays. Master slider on either preset should dim PWM and RGB together.
+8. **Button**: short-press cycles Warm Glow → Natural → Candle → Wifi RSSI → Color → Magic → …. Hold 3–10s then release to toggle on/off. Hold 10s to factory-reset.
 
 ### If an effect looks wrong
 
@@ -91,6 +92,11 @@ The custom engine lives in `esphome/includes/candle_effects.h`. Tunables are gro
 
 - **Too dim / too bright overall** — use the **ESP Candle** brightness slider (presets set a default; they no longer force 100%).
 - **Candle flicker too harsh** — adjust `smoothing` / `depth` / snuff constants in `candle::`.
+- **Candle too windy / too calm with people nearby** — tune `RSSI_DELTA_FULL_DB`,
+  `WIND_WEIGHT_BOOST_MAX`, `GUST_SPEED_MULT_MAX`, or `SNUFF_RATE_MULT_MAX` in `candle::`
+  (subtle RSSI wind on default Candle).
+- **Wifi RSSI preset too dim/bright for your AP** — adjust `RSSI_WEAK_DB` /
+  `RSSI_STRONG_DB` / `WHITE_PEAK` / `RED_ONSET` / `GREEN_ONSET` in `wifi_rssi::`.
 - **Red ember too strong** — adjust `RED_MIN` / `RED_MAX` / `RED_CURVE`.
 - **Effect not applying to a channel** — check `id(pwm_led_N)` in the effect header; only effects / Preset / numbers should call `set_level` (no competing light wrappers).
 

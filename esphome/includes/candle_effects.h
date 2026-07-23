@@ -93,8 +93,8 @@ inline void pwm_from_numbers() {
 
 // Animated scenes own their PWM; channel sliders flip these to Custom.
 inline bool is_animated_preset(const std::string &preset) {
-  return preset == "Candle" || preset == "Color" || preset == "Magic" ||
-         preset == "Ember";
+  return preset == "Candle" || preset == "Wifi RSSI" || preset == "Color" ||
+         preset == "Magic" || preset == "Ember";
 }
 
 // Apply current White/Red/UV number states × master (Custom mode / on_state).
@@ -154,6 +154,10 @@ namespace uv_accent {
 // they never lock together. A red ember glows inverse to flame brightness.
 // The RGB strip is held off (this is the warm-flame mode). UV is off.
 //
+// Live WiFi RSSI deltas bias an "air" factor (0..1): unsettled RF raises
+// WIND pick weight, gust-envelope speed, and snuff rate. Absolute RSSI is
+// ignored so a far bedroom stays calm. air=0 keeps the base schedule alone.
+//
 // Drives: white_1, white_2, red. RGB strip black. UV off.
 // ===========================================================================
 namespace candle {
@@ -182,6 +186,16 @@ namespace candle {
   static constexpr float SNUFF_PER_SEC = 1.0f;
   static constexpr float SNUFF_DEPTH   = 0.45f;  // dip to ~55% (was 3% — too glitchy)
   static constexpr float SNUFF_RECOVER = 0.035f; // slower recover = softer edge
+
+  // RSSI → air (subtle wind). Samples wifi::wifi_rssi() directly so the
+  // effect is not limited to the 60 s HA wifi_signal diagnostic interval.
+  static constexpr unsigned long RSSI_SAMPLE_MS = 1500;
+  static constexpr float RSSI_DELTA_FULL_DB    = 8.0f;   // |ΔdBm| that saturates air→1
+  static constexpr float AIR_RISE_ALPHA        = 0.45f;  // attack on RF jumps
+  static constexpr float AIR_FALL_ALPHA        = 0.06f;  // slow release
+  static constexpr int   WIND_WEIGHT_BOOST_MAX = 15;     // PCT_WIND 10 → up to 25
+  static constexpr float GUST_SPEED_MULT_MAX   = 1.4f;
+  static constexpr float SNUFF_RATE_MULT_MAX   = 1.25f;
 
   // white_max_power on the ledc outputs (must match espcandle.base.yaml).
   // Standalone writes absolute fractions of MAX_DUTY; ESPHome set_level is
@@ -214,11 +228,52 @@ namespace candle {
     // Initial levels as set_level (absolute 0.08 / WHITE_MAX), matching enterCandleMode.
     float out_w1 = 0.08f / WHITE_MAX, out_w2 = 0.08f / WHITE_MAX, out_red = 0.05f;
     unsigned long last = 0;
+    // RSSI wind: air in [0,1]; last_rssi only valid when rssi_have.
+    float air = 0.0f;
+    int8_t last_rssi = 0;
+    bool rssi_have = false;
+    unsigned long rssi_next = 0;
   };
   static State s;
 
+  // Sample live RSSI and update s.air. Decays toward 0 when WiFi is down.
+  static void update_air(unsigned long now) {
+    if (now < s.rssi_next) return;
+    s.rssi_next = now + RSSI_SAMPLE_MS;
+
+    float target = 0.0f;
+#ifdef USE_WIFI
+    if (esphome::wifi::global_wifi_component != nullptr) {
+      int8_t rssi = esphome::wifi::global_wifi_component->wifi_rssi();
+      if (rssi != esphome::wifi::WIFI_RSSI_DISCONNECTED) {
+        if (!s.rssi_have) {
+          s.last_rssi = rssi;
+          s.rssi_have = true;
+          return;  // need a second sample before any delta
+        }
+        int d = (int) rssi - (int) s.last_rssi;
+        if (d < 0) d = -d;
+        s.last_rssi = rssi;
+        target = clampf((float) d / RSSI_DELTA_FULL_DB);
+      } else {
+        s.rssi_have = false;
+      }
+    }
+#else
+    (void) now;
+#endif
+    float alpha = (target > s.air) ? AIR_RISE_ALPHA : AIR_FALL_ALPHA;
+    s.air += (target - s.air) * alpha;
+    if (s.air < 0.001f) s.air = 0.0f;
+  }
+
   static Sub pick_next(Sub cur) {
-    struct { Sub m; int w; } t[3] = {{Sub::CALM,PCT_CALM},{Sub::FLICKER,PCT_FLICKER},{Sub::WIND,PCT_WIND}};
+    int wind_w = PCT_WIND + (int)(s.air * (float) WIND_WEIGHT_BOOST_MAX + 0.5f);
+    struct { Sub m; int w; } t[3] = {
+      {Sub::CALM, PCT_CALM},
+      {Sub::FLICKER, PCT_FLICKER},
+      {Sub::WIND, wind_w},
+    };
     int total = 0;
     for (auto& e : t) if (e.m != cur) total += e.w;
     if (total == 0) return cur;
@@ -246,6 +301,9 @@ namespace candle {
     if (initial) {
       it.all() = esphome::Color(0, 0, 0);
       s.sub = Sub::FLICKER;
+      s.air = 0.0f;
+      s.rssi_have = false;
+      s.rssi_next = 0;
       s.next_sub = pick_next(s.sub);
       s.sub_end = millis() + rnd(SUBMODE_MIN_MS, SUBMODE_MAX_MS);
       s.xfade_end = 0;
@@ -263,6 +321,8 @@ namespace candle {
     s.last = now;
     float dtf = (float) dt;
 
+    update_air(now);
+
     // Sub-mode scheduler with crossfade.
     if (now >= s.sub_end && s.xfade_end == 0) {
       s.next_sub = pick_next(s.sub);
@@ -271,11 +331,12 @@ namespace candle {
     }
     if (s.xfade_end != 0 && now >= s.xfade_end) { s.sub = s.next_sub; s.xfade_end = 0; }
 
-    // Advance noise axes.
+    // Advance noise axes. Gust envelope speeds up when RF air is unsettled.
     const SubParams& p = params(s.sub);
+    float gust_mult = 1.0f + s.air * (GUST_SPEED_MULT_MAX - 1.0f);
     s.t_fast  += p.speed  * dtf;
     s.t_fast2 += p.speed2 * dtf;
-    s.t_gust  += WIND_GUST_SPEED * dtf;
+    s.t_gust  += WIND_GUST_SPEED * gust_mult * dtf;
     s.t_w1    += W1_SPEED * dtf;
     s.t_w2    += W2_SPEED * dtf;
 
@@ -302,10 +363,10 @@ namespace candle {
     float target_w2 = clampf(cur_level * (1.0f + split * (w2n - 0.5f) * 2.0f));
 
     // Snuff events (flicker only) — time-based trigger; recover on later ticks.
+    float snuff_rate = SNUFF_PER_SEC * (1.0f + s.air * (SNUFF_RATE_MULT_MAX - 1.0f));
     auto snuff_tick = [&](float &snuff) {
       if (snuff >= 1.0f) {
-        // Approx Poisson: chance ≈ rate * dt (capped). Scale uses 10000 for resolution.
-        int threshold = (int)(SNUFF_PER_SEC * 10.0f * dtf);
+        int threshold = (int)(snuff_rate * 10.0f * dtf);
         if (threshold > 0 && rnd(0, 10000) < threshold)
           snuff = 1.0f - SNUFF_DEPTH;
       } else {
@@ -347,6 +408,126 @@ namespace candle {
     it.all() = esphome::Color(0, 0, 0);
   }
 }  // namespace candle
+
+// ===========================================================================
+// WIFI RSSI - steady diagnostic gauge (no flicker).
+//
+// Absolute WiFi signal → white level. Red fades in when the link is weak.
+// RGB strip starts glowing green as the signal gets strong. UV off.
+// ===========================================================================
+namespace wifi_rssi {
+  static constexpr float WHITE_MAX = 0.40f;
+
+  // Absolute RSSI → 0..1 signal. Typical STA range ~-90 … -40 dBm.
+  static constexpr unsigned long SAMPLE_MS = 1000;
+  static constexpr float RSSI_WEAK_DB     = -88.0f;
+  static constexpr float RSSI_STRONG_DB   = -42.0f;
+  static constexpr float SIGNAL_EMA       = 0.18f;  // smooth dBm noise
+  static constexpr float OUT_SMOOTH       = 0.08f;  // output lerp per ms
+
+  // White: steady level, no Perlin. Peak as fraction of full duty → set_level.
+  static constexpr float WHITE_PEAK = 0.22f / WHITE_MAX;  // readable at strong RSSI
+  static constexpr float WHITE_FLOOR = 0.02f / WHITE_MAX; // barely-on when dead
+
+  // Red: kicks in below RED_ONSET (signal), peaks at RED_PEAK when signal≈0.
+  static constexpr float RED_ONSET = 0.40f;
+  static constexpr float RED_PEAK  = 0.55f;  // of red max_power
+  static constexpr float RED_CURVE = 1.4f;
+
+  // Green RGB: starts above GREEN_ONSET, full V at strong signal.
+  static constexpr float GREEN_ONSET = 0.55f;
+  static constexpr uint8_t GREEN_H = 96;   // pure-ish green on HSV wheel
+  static constexpr uint8_t GREEN_S = 220;
+  static constexpr uint8_t GREEN_V_MAX = 140;
+
+  struct State {
+    float signal = 0.0f;
+    float out_w = 0.0f, out_red = 0.0f, out_g = 0.0f;
+    unsigned long last = 0;
+    unsigned long next_sample = 0;
+    bool have_rssi = false;
+  };
+  static State s;
+
+  static float rssi_to_signal(int8_t rssi) {
+#ifdef USE_WIFI
+    if (rssi == esphome::wifi::WIFI_RSSI_DISCONNECTED)
+      return 0.0f;
+#endif
+    return clampf((float(rssi) - RSSI_WEAK_DB) / (RSSI_STRONG_DB - RSSI_WEAK_DB));
+  }
+
+  static void sample(unsigned long now) {
+    if (now < s.next_sample) return;
+    s.next_sample = now + SAMPLE_MS;
+
+    float target = 0.0f;
+#ifdef USE_WIFI
+    if (esphome::wifi::global_wifi_component != nullptr) {
+      int8_t rssi = esphome::wifi::global_wifi_component->wifi_rssi();
+      target = rssi_to_signal(rssi);
+      if (!s.have_rssi) {
+        s.signal = target;
+        s.have_rssi = true;
+        return;
+      }
+    }
+#else
+    (void) now;
+#endif
+    s.signal += (target - s.signal) * SIGNAL_EMA;
+  }
+
+  inline void tick(esphome::light::AddressableLight &it, bool initial) {
+    if (initial) {
+      s.signal = 0.0f;
+      s.out_w = s.out_red = s.out_g = 0.0f;
+      s.have_rssi = false;
+      s.next_sample = 0;
+      s.last = millis();
+      it.all() = esphome::Color(0, 0, 0);
+    }
+    unsigned long now = millis();
+    unsigned long dt = now - s.last;
+    if (dt == 0) return;
+    s.last = now;
+    float dtf = (float) dt;
+
+    sample(now);
+
+    // White tracks signal steadily (no flicker).
+    float target_w = WHITE_FLOOR + (WHITE_PEAK - WHITE_FLOOR) * s.signal;
+
+    // Red only when weak: full at 0, off by RED_ONSET.
+    float red_t = 0.0f;
+    if (s.signal < RED_ONSET)
+      red_t = powf((RED_ONSET - s.signal) / RED_ONSET, RED_CURVE);
+    float target_red = RED_PEAK * red_t;
+
+    // Green RGB above GREEN_ONSET.
+    float green_t = 0.0f;
+    if (s.signal > GREEN_ONSET)
+      green_t = clampf((s.signal - GREEN_ONSET) / (1.0f - GREEN_ONSET));
+    float target_g = green_t;
+
+    float a = clampf(OUT_SMOOTH * dtf);
+    s.out_w   += (target_w   - s.out_w)   * a;
+    s.out_red += (target_red - s.out_red) * a;
+    s.out_g   += (target_g   - s.out_g)   * a;
+
+    float master = master_level();
+    id(pwm_led_1).set_level(clampf(s.out_w * master));
+    id(pwm_led_2).set_level(clampf(s.out_w * master));
+    id(pwm_led_4).set_level(clampf(s.out_red * master));
+    id(pwm_led_3).set_level(0.0f);
+
+    uint8_t gv = (uint8_t)(GREEN_V_MAX * clampf(s.out_g) + 0.5f);
+    if (gv > 0)
+      it.all() = esphome::light::ESPHSVColor(GREEN_H, GREEN_S, gv);
+    else
+      it.all() = esphome::Color(0, 0, 0);
+  }
+}  // namespace wifi_rssi
 
 // ===========================================================================
 // EMBER - slow deep-red glow with a quiet white breath. RGB strip off.

@@ -71,7 +71,7 @@ By default the web server is unauthenticated (trusted-LAN model). If you enable 
 
 The factory firmware exposes one light (`ESP Candle` = master on/off + brightness for RGB and PWM), a **Preset** select (scenes with default brightness), and three config numbers (**White Brightness**, **Red Intensity**, **UV Intensity**) for Custom mix. PWM is driven via `ledc.set_level()` — there is no partition light and no monochromatic channel lights.
 
-For day-to-day use, pick a Preset (the light slider is the overall level). On static scenes (Warm Glow / Natural / UV Accent), White / Red / UV tweak that scene’s mix without changing master brightness or leaving the preset. On animated scenes (Candle / Color / Magic / Ember), moving a channel slider stops the effect and switches Preset to **Custom**. Scene effects scale with master brightness.
+For day-to-day use, pick a Preset (the light slider is the overall level). On static scenes (Warm Glow / Natural / UV Accent), White / Red / UV tweak that scene’s mix without changing master brightness or leaving the preset. On animated scenes (Candle / Wifi RSSI / Color / Magic / Ember), moving a channel slider stops the effect and switches Preset to **Custom**. Scene effects scale with master brightness.
 
 If you want separate HA light tiles per channel instead of numbers, add monochromatic lights on `pwm_led_1`…`pwm_led_4` in a forked YAML. Do not also drive those outputs from effects/`set_level` without coordination — two writers on the same LEDC channel fight each other (that is why the factory build dropped the partition model).
 

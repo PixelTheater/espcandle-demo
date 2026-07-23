@@ -6,6 +6,19 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-23
+
+### Added
+
+- **Wifi RSSI** preset: steady diagnostic gauge — white level tracks absolute
+  WiFi signal, red kicks in when weak, RGB glows green when strong. Default
+  master 70%. Boot short-press includes it in the cycle after Candle.
+
+### Changed
+
+- Candle mode: WiFi RSSI *deltas* bias wind/snuff lightly; absolute level does
+  not dim the normal Candle preset.
+
 ## [0.3.0] - 2026-07-22
 
 ### Added
@@ -125,7 +138,8 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 - Remove older per-candle ESPHome example/config files that were superseded by the shared base and per-device template.
 
-[Unreleased]: https://github.com/PixelTheater/espcandle-demo/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/PixelTheater/espcandle-demo/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.4.0
 [0.3.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.3.0
 [0.2.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.2.0
 [0.1.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.1.0

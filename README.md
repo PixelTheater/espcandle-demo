@@ -3,7 +3,7 @@ title: ESP32 Candle Firmware
 description: Tea-candle-sized ESP32-S3 LED smart light — Home Assistant via ESPHome (primary) and optional PlatformIO demo.
 tags: [esphome, home-assistant, platformio, hardware-specs, firmware-installation, troubleshooting, led-lighting]
 lastmod: 2026-07-20
-version: 0.3.0
+version: 0.4.0
 ---
 
 # ESP32 Candle Firmware
@@ -25,12 +25,12 @@ The primary firmware path. Provision over Bluetooth or USB (Improv), adopt in Ho
 | Control | Role |
 |---|---|
 | **ESP Candle** | Master on/off **and** overall brightness (scales RGB + PWM) |
-| **Preset** | Scene: Off, Warm Glow, Natural, Ember, UV Accent, Candle (40%), Color (50%), Magic, Custom |
-| **White / Red / UV** | Mix: under Warm Glow / Natural / UV Accent they tweak that scene in place; under Candle / Color / Magic / Ember they flip Preset to Custom |
+| **Preset** | Scene: Off, Warm Glow, Natural, Ember, UV Accent, Candle (40%), Wifi RSSI (70%), Color (50%), Magic, Custom |
+| **White / Red / UV** | Mix: under Warm Glow / Natural / UV Accent they tweak that scene in place; under Candle / Wifi RSSI / Color / Magic / Ember they flip Preset to Custom |
 | **Restart / Safe Mode / Factory Reset** | Recovery |
 | **Internal Temperature** | ESP32 core temperature |
 
-Boot button: short-press cycles Warm Glow → Natural → Candle → Color → Magic; hold 3–10s then release to toggle; hold 10s for factory reset.
+Boot button: short-press cycles Warm Glow → Natural → Candle → Wifi RSSI → Color → Magic; hold 3–10s then release to toggle; hold 10s for factory reset.
 
 ### End-user setup (no YAML)
 
@@ -233,7 +233,7 @@ Pinout and caps live in `src/config.h`: PWM 5kHz 12-bit; channel caps white 40%,
 
 ## Release History
 
-See [CHANGELOG.md](CHANGELOG.md) for release notes. Latest tag: `v0.3.0`.
+See [CHANGELOG.md](CHANGELOG.md) for release notes. Latest tag: `v0.4.0`.
 
 ## License
 

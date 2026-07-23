@@ -32,7 +32,7 @@ substitutions:
   room: ""
   device_description: "ESP32-S3 powered smart tea candle (RGB + warm white + UV + deep red)"
   project_name: "PixelTheater.ESP Candle"
-  project_version: "0.3.0"
+  project_version: "0.4.0"
 
   # Logging level: NONE, ERROR, WARN, INFO (default), DEBUG, VERBOSE, VERY_VERBOSE
   log_level: "INFO"
@@ -222,6 +222,11 @@ light:
           lambda: |-
             espcandle::candle::tick(it, initial_run);
       - addressable_lambda:
+          name: Wifi RSSI
+          update_interval: 50ms
+          lambda: |-
+            espcandle::wifi_rssi::tick(it, initial_run);
+      - addressable_lambda:
           name: Color
           update_interval: 50ms
           lambda: |-
@@ -294,7 +299,7 @@ light:
 
 # -- Presets ----------------------------------------------------------------
 # Each producing preset is a scene: effect + default master brightness.
-# Short-press cycles Warm Glow → Natural → Candle → Color → Magic.
+# Short-press cycles Warm Glow → Natural → Candle → Wifi RSSI → Color → Magic.
 select:
   - platform: template
     name: "Preset"
@@ -310,6 +315,7 @@ select:
       - "Ember"
       - "UV Accent"
       - "Candle"
+      - "Wifi RSSI"
       - "Color"
       - "Magic"
       - "Custom"
@@ -355,6 +361,10 @@ select:
           } else if (x == "Candle") {
             sync_levels(0, 0, 0);  // effect owns PWM
             soft_effect("Candle", 0.40f);
+          } else if (x == "Wifi RSSI") {
+            // Diagnostic gauge: white = RSSI level, red when weak, green RGB when strong.
+            sync_levels(0, 0, 0);
+            soft_effect("Wifi RSSI", 0.70f);
           } else if (x == "Color") {
             sync_levels(0, 0, 0);
             soft_effect("Color", 0.50f);
@@ -374,7 +384,7 @@ select:
 # -- Channel levels (HA Configuration section) ------------------------------
 # Mix controls. Static scenes (Warm Glow / Natural / UV Accent) keep the
 # preset and feed mix into the effect — master / RGB scene tint stay put.
-# Animated scenes (Candle / Color / Magic / Ember) flip to Custom.
+# Animated scenes (Candle / Wifi RSSI / Color / Magic / Ember) flip to Custom.
 number:
   - platform: template
     name: "White Brightness"
@@ -466,14 +476,15 @@ binary_sensor:
     filters:
       - delayed_on_off: 20ms
     on_multi_click:
-      # Short press: cycle Warm Glow → Natural → Candle → Color → Magic → …
+      # Short press: cycle Warm Glow → Natural → Candle → Wifi RSSI → Color → Magic → …
       - timing:
           - ON for at most 1s
           - OFF for at least 0.2s
         then:
           - lambda: |-
-              static const char *cycle[] = {"Warm Glow", "Natural", "Candle", "Color", "Magic"};
-              constexpr int n = 5;
+              static const char *cycle[] = {
+                  "Warm Glow", "Natural", "Candle", "Wifi RSSI", "Color", "Magic"};
+              constexpr int n = 6;
               auto cur = id(candle_preset).current_option();
               int next = 0;
               for (int i = 0; i < n; i++) {
