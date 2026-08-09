@@ -21,10 +21,10 @@
 #   - is discovered by Home Assistant via the native API once on Wi-Fi
 #   - accepts OTA updates from Home Assistant or the ESPHome CLI
 #
-# Only ONE light is exposed to Home Assistant by default: "ESP Candle" (the
-# RGB strip + master brightness for PWM). Presets are scenes (effect + default
-# brightness). Warm white, UV, and deep red are driven via ledc — config
-# number sliders for Custom mix. See docs/modders.md.
+# HA entities: "ESP Candle" light (scene master in presets; RGB strip in Custom),
+# Preset select, White/Red/UV level numbers + enable switches, and RGB Strip
+# enable. Scenes own all outputs; any channel change enters Custom. PWM channels
+# are driven via ledc.set_level(). See docs/modders.md.
 
 substitutions:
   name: esp32-candle
@@ -32,7 +32,7 @@ substitutions:
   room: ""
   device_description: "ESP32-S3 powered smart tea candle (RGB + warm white + UV + deep red)"
   project_name: "PixelTheater.ESP Candle"
-  project_version: "0.4.0"
+  project_version: "0.5.0"
 
   # Logging level: NONE, ERROR, WARN, INFO (default), DEBUG, VERBOSE, VERY_VERBOSE
   log_level: "INFO"
@@ -175,12 +175,11 @@ globals:
     initial_value: "false"
 
 # -- Lights -----------------------------------------------------------------
-# Primary HA light = RGB strip + master brightness for the whole candle.
-# Presets are scenes: effect engine + default master %. Effects (including
-# static Natural / Warm Glow / UV Accent) scale PWM by brightness×state;
-# addressable RGB is scaled by ESPHome color correction the same way.
-# Channel numbers (White/Red/UV): under static scenes they tweak mix in-place;
-# under animated scenes they flip Preset to Custom. Light toggle = master off.
+# Primary HA light = RGB strip. In a scene preset, its brightness is the scene
+# master (effects scale PWM by brightness×state; addressable RGB via color
+# correction). In Custom, on/off + colour + brightness drive the strip only
+# (gated by RGB Strip). Light off in Custom turns off RGB; from a scene it
+# extinguishes everything and selects Preset Off.
 light:
   - platform: esp32_rmt_led_strip
     id: rgb_strip
@@ -245,12 +244,23 @@ light:
           if (opt.empty())
             return;
 
-          // Custom: leave the user's RGB/effect/brightness alone.
-          if (opt == "Custom")
+          // Custom: RGB light is independent — on/off/color/brightness only
+          // affect the strip. Do not re-apply a scene or touch PWM.
+          if (opt == "Custom") {
+            id(rgb_enable).publish_state(true);
             return;
+          }
 
-          // Re-apply the current preset (restores its default master %).
-          // Do not force brightness to 1.0 here — that caused the "shoots up" bug.
+          // Off + power on → Custom (manual). PWM stays at slider/enable state.
+          if (opt == "Off") {
+            id(rgb_enable).publish_state(true);
+            auto call = id(candle_preset).make_call();
+            call.set_option("Custom");
+            call.perform();
+            return;
+          }
+
+          // Re-apply the current scene preset.
           id(applying_preset) = true;
           {
             auto blank = id(rgb_strip).turn_on();
@@ -259,23 +269,24 @@ light:
             blank.perform();
           }
           id(applying_preset) = false;
-
-          if (opt == "Off") {
-            auto call = id(candle_preset).make_call();
-            call.set_option("Candle");
-            call.perform();
-          } else {
+          {
             auto call = id(candle_preset).make_call();
             call.set_option(std::string(opt.c_str(), opt.size()));
             call.perform();
           }
     on_turn_off:
-      # Skip when a Preset is applying (internal light calls during set_action).
+      # Scene modes: extinguish everything and select Off.
+      # Custom: RGB light off only — White/Red/UV keep their levels.
       - if:
           condition:
             lambda: "return !id(applying_preset);"
           then:
             - lambda: |-
+                auto opt = id(candle_preset).current_option();
+                if (opt == "Custom") {
+                  id(rgb_enable).publish_state(false);
+                  return;
+                }
                 id(pwm_led_1).set_level(0.0f);
                 id(pwm_led_2).set_level(0.0f);
                 id(pwm_led_3).set_level(0.0f);
@@ -284,18 +295,32 @@ light:
                 id(white_level).publish_state(0);
                 id(red_level).publish_state(0);
                 id(uv_level).publish_state(0);
+                id(white_enable).publish_state(false);
+                id(red_enable).publish_state(false);
+                id(uv_enable).publish_state(false);
+                id(rgb_enable).publish_state(false);
                 id(applying_preset) = false;
-            - select.set:
-                id: candle_preset
-                option: "Off"
+            - if:
+                condition:
+                  lambda: "return id(candle_preset).current_option() != \"Custom\";"
+                then:
+                  - select.set:
+                      id: candle_preset
+                      option: "Off"
     on_state:
-      # Custom mix: remaster PWM when HA brightness/on changes (effect is off).
+      # Custom: never force colour to black (that made the picker look dead).
+      # If RGB Strip is off, keep the light entity off so WS2812s stay dark while
+      # colour/brightness are preserved for the next turn-on.
       - lambda: |-
           if (id(applying_preset))
             return;
           if (id(candle_preset).current_option() != "Custom")
             return;
-          espcandle::apply_custom_pwm();
+          if (!id(rgb_enable).state && id(rgb_strip).current_values.get_state()) {
+            id(applying_preset) = true;
+            id(rgb_strip).turn_off().perform();
+            id(applying_preset) = false;
+          }
 
 # -- Presets ----------------------------------------------------------------
 # Each producing preset is a scene: effect + default master brightness.
@@ -326,10 +351,14 @@ select:
             id(white_level).publish_state(white_pct);
             id(red_level).publish_state(red_pct);
             id(uv_level).publish_state(uv_pct);
+            id(white_enable).publish_state(white_pct > 0.5f);
+            id(red_enable).publish_state(red_pct > 0.5f);
+            id(uv_enable).publish_state(uv_pct > 0.5f);
           };
           // Scene apply: turn on, set master brightness, start effect.
           // Effects scale all channels by brightness×state (master_level).
-          auto soft_effect = [](const char *effect, float brightness) {
+          auto soft_effect = [](const char *effect, float brightness, bool rgb_on) {
+            id(rgb_enable).publish_state(rgb_on);
             auto rgb = id(rgb_strip).turn_on();
             rgb.set_rgb(0.0f, 0.0f, 0.0f);
             rgb.set_brightness(brightness);
@@ -343,54 +372,53 @@ select:
             id(pwm_led_3).set_level(0.0f);
             id(pwm_led_4).set_level(0.0f);
             sync_levels(0, 0, 0);
+            id(rgb_enable).publish_state(false);
             id(rgb_strip).turn_off().perform();
           } else if (x == "Warm Glow") {
-            // Mix shown as % of channel at master=100%; default master 60%.
             sync_levels(10, 40, 0);
-            soft_effect("Warm Glow", 0.60f);
+            soft_effect("Warm Glow", 0.60f, false);
           } else if (x == "Natural") {
-            // White mix 100% × master 50% → 50% whites; RGB warm tint ~30%.
             sync_levels(100, 0, 0);
-            soft_effect("Natural", 0.50f);
+            soft_effect("Natural", 0.50f, true);
           } else if (x == "Ember") {
             sync_levels(2, 10, 0);
-            soft_effect("Ember", 0.45f);
+            soft_effect("Ember", 0.45f, false);
           } else if (x == "UV Accent") {
             sync_levels(0, 0, 50);
-            soft_effect("UV Accent", 0.40f);
+            soft_effect("UV Accent", 0.40f, true);
           } else if (x == "Candle") {
-            sync_levels(0, 0, 0);  // effect owns PWM
-            soft_effect("Candle", 0.40f);
+            // Effect owns the flicker; publish indicative levels so White/Red
+            // enables match what the scene actually drives.
+            sync_levels(60, 20, 0);
+            soft_effect("Candle", 0.40f, false);
           } else if (x == "Wifi RSSI") {
-            // Diagnostic gauge: white = RSSI level, red when weak, green RGB when strong.
-            sync_levels(0, 0, 0);
-            soft_effect("Wifi RSSI", 0.70f);
+            // White tracks signal; red may appear when weak. Indicative mid.
+            sync_levels(50, 15, 0);
+            soft_effect("Wifi RSSI", 0.70f, true);
           } else if (x == "Color") {
             sync_levels(0, 0, 0);
-            soft_effect("Color", 0.50f);
+            soft_effect("Color", 0.50f, true);
           } else if (x == "Magic") {
-            sync_levels(0, 0, 0);
-            soft_effect("Magic", 0.45f);
+            // Effect owns red (~40%) + UV (~55%) + RGB; sync UI to that.
+            sync_levels(0, 40, 55);
+            soft_effect("Magic", 0.45f, true);
           } else if (x == "Custom") {
-            // Manual mix: stop scene effect so channel sliders own PWM;
-            // keep current brightness; remaster PWM from number states.
-            auto rgb = id(rgb_strip).turn_on();
-            rgb.set_effect("None");
-            rgb.perform();
+            // Manual mode: stop scene effect; PWM = levels × enables (absolute).
+            // Do not auto-flip enables — sliders and scene entry own that.
+            espcandle::stop_scene_effect();
             espcandle::apply_custom_pwm();
           }
           id(applying_preset) = false;
 
-# -- Channel levels (HA Configuration section) ------------------------------
-# Mix controls. Static scenes (Warm Glow / Natural / UV Accent) keep the
-# preset and feed mix into the effect — master / RGB scene tint stay put.
-# Animated scenes (Candle / Wifi RSSI / Color / Magic / Ember) flip to Custom.
+# -- Channel levels + enables (Custom / device page) ------------------------
+# Scenes own outputs while selected. Any slider/enable change → Custom.
+# In Custom, PWM is absolute (level × enable, not gated by the RGB light).
+# set_action uses `x` because optimistic publish_state runs after set_action.
 number:
   - platform: template
     name: "White Brightness"
     id: white_level
     icon: mdi:lightbulb-outline
-    entity_category: config
     unit_of_measurement: "%"
     min_value: 0
     max_value: 100
@@ -400,21 +428,12 @@ number:
     restore_value: true
     set_action:
       - lambda: |-
-          auto preset = std::string(id(candle_preset).current_option().c_str());
-          if (!id(applying_preset) && espcandle::is_animated_preset(preset)) {
-            auto call = id(candle_preset).make_call();
-            call.set_option("Custom");
-            call.perform();
-          }
-          // Static scenes: effect tick applies mix × master. Custom: write now.
-          if (id(candle_preset).current_option() == "Custom")
-            espcandle::apply_custom_pwm();
+          espcandle::on_channel_slider(x, id(red_level).state, id(uv_level).state, 'w');
 
   - platform: template
     name: "Red Intensity"
     id: red_level
     icon: mdi:circle
-    entity_category: config
     unit_of_measurement: "%"
     min_value: 0
     max_value: 100
@@ -424,20 +443,12 @@ number:
     restore_value: true
     set_action:
       - lambda: |-
-          auto preset = std::string(id(candle_preset).current_option().c_str());
-          if (!id(applying_preset) && espcandle::is_animated_preset(preset)) {
-            auto call = id(candle_preset).make_call();
-            call.set_option("Custom");
-            call.perform();
-          }
-          if (id(candle_preset).current_option() == "Custom")
-            espcandle::apply_custom_pwm();
+          espcandle::on_channel_slider(id(white_level).state, x, id(uv_level).state, 'r');
 
   - platform: template
     name: "UV Intensity"
     id: uv_level
     icon: mdi:weather-night
-    entity_category: config
     unit_of_measurement: "%"
     min_value: 0
     max_value: 100
@@ -447,14 +458,72 @@ number:
     restore_value: true
     set_action:
       - lambda: |-
-          auto preset = std::string(id(candle_preset).current_option().c_str());
-          if (!id(applying_preset) && espcandle::is_animated_preset(preset)) {
-            auto call = id(candle_preset).make_call();
-            call.set_option("Custom");
-            call.perform();
-          }
-          if (id(candle_preset).current_option() == "Custom")
-            espcandle::apply_custom_pwm();
+          espcandle::on_channel_slider(id(white_level).state, id(red_level).state, x, 'u');
+
+switch:
+  - platform: template
+    name: "White"
+    id: white_enable
+    icon: mdi:lightbulb-outline
+    optimistic: true
+    restore_mode: ${switch_restore_mode}
+    turn_on_action:
+      - lambda: |-
+          id(white_enable).publish_state(true);
+          espcandle::on_channel_enable_changed();
+    turn_off_action:
+      - lambda: |-
+          id(white_enable).publish_state(false);
+          espcandle::on_channel_enable_changed();
+
+  - platform: template
+    name: "Red"
+    id: red_enable
+    icon: mdi:circle
+    optimistic: true
+    restore_mode: ${switch_restore_mode}
+    turn_on_action:
+      - lambda: |-
+          id(red_enable).publish_state(true);
+          espcandle::on_channel_enable_changed();
+    turn_off_action:
+      - lambda: |-
+          id(red_enable).publish_state(false);
+          espcandle::on_channel_enable_changed();
+
+  - platform: template
+    name: "UV"
+    id: uv_enable
+    icon: mdi:weather-night
+    optimistic: true
+    restore_mode: ${switch_restore_mode}
+    turn_on_action:
+      - lambda: |-
+          id(uv_enable).publish_state(true);
+          espcandle::on_channel_enable_changed();
+    turn_off_action:
+      - lambda: |-
+          id(uv_enable).publish_state(false);
+          espcandle::on_channel_enable_changed();
+
+  # RGB Strip: gates WS2812 output only. Does not touch White/Red/UV PWM.
+  # Scenes keep running (RGB writes black while off). Custom turns the light
+  # off/on and preserves colour — never set_rgb(0,0,0) or stop scene effects.
+  - platform: template
+    name: "RGB Strip"
+    id: rgb_enable
+    icon: mdi:led-strip-variant
+    optimistic: true
+    restore_mode: ${switch_restore_mode}
+    turn_on_action:
+      - lambda: |-
+          // Publish first — turn_on_action runs before optimistic state update.
+          id(rgb_enable).publish_state(true);
+          espcandle::rgb_strip_output_on();
+    turn_off_action:
+      - lambda: |-
+          id(rgb_enable).publish_state(false);
+          espcandle::rgb_strip_output_off();
 
 # -- Boot button ------------------------------------------------------------
 binary_sensor:

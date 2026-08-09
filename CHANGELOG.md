@@ -6,6 +6,37 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-09
+
+### Added
+
+- Per-channel **White / Red / UV** enable switches alongside the level sliders.
+- **RGB Strip** switch: gates WS2812 output only; colour is preserved when off.
+
+### Changed
+
+- Control model: scene presets own all outputs. Any user change (slider,
+  channel enable, or selecting Custom) leaves the scene for **Custom** with
+  independent channels. White/Red/UV use level × on/off as absolute PWM (not
+  gated by the RGB light).
+- Turning the main light off in Custom turns off RGB only (PWM stays). Preset
+  Off still extinguishes everything. Raising UV/Red/White from Off lights that
+  channel without requiring the RGB light on.
+- Light on from Preset **Off** enters **Custom** (manual), not Candle.
+
+### Fixed
+
+- Template number/switch lag (`set_action` before optimistic publish) so
+  sliders and enables apply the intended value (`x` / explicit publish).
+- RGB Strip no longer stops scene effects or zeroes the light colour (that made
+  the picker look dead and broke Candle/Color when toggling the strip).
+- Enabling RGB Strip from Preset Off now flips to Custom (same handoff as
+  powering the main light from Off).
+- Scene entry publishes channel enables/levels that match what the effect
+  drives (e.g. Magic: Red+UV on; Candle: White+Red on), so toggles are not
+  fighting a lying UI. Leaving a scene stops the effect and turns RGB Strip
+  off (no solid-white jump at scene brightness); enable toggles in Custom no
+  longer re-stop the strip.
 ## [0.4.0] - 2026-07-23
 
 ### Added
@@ -138,7 +169,8 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 - Remove older per-candle ESPHome example/config files that were superseded by the shared base and per-device template.
 
-[Unreleased]: https://github.com/PixelTheater/espcandle-demo/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/PixelTheater/espcandle-demo/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.5.0
 [0.4.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.4.0
 [0.3.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.3.0
 [0.2.0]: https://github.com/PixelTheater/espcandle-demo/releases/tag/v0.2.0

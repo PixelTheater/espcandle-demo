@@ -12,8 +12,8 @@ shape that workflow expects.** The support site owns the manifest + page markup;
 this repo owns the binaries and the notification. This document is the contract
 between the two.
 
-> **Status (2026-07-23):** the support side is live. Candle manifests sync from
-> GitHub Releases (`v0.4.0` is the current firmware drop).
+> **Status (2026-08-09):** the support side is live. Candle manifests sync from
+> GitHub Releases (`v0.5.0` is the current firmware drop once tagged).
 > Auto-dispatch needs a working `SUPPORT_SITE_PAT` (see below); without it,
 > bins still upload to the release and the support site can be synced manually.
 

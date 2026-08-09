@@ -71,20 +71,23 @@ After a clean boot, the candle is unprovisioned (no Wi-Fi). Adopt it:
    - **Captive portal**: if Wi-Fi fails for ~90s the candle opens a fallback AP — join it and submit credentials at the captive portal page.
 2. **mDNS discovery** — once on Wi-Fi, the candle announces `_esphomelib._tcp.local`. Home Assistant shows it under *Discovered*.
 3. **Adopt** — tap **Configure** in HA. The runtime Noise PSK is generated and stored on the candle automatically (no key to paste).
-4. **Entities** — one light (**ESP Candle** = master on/off + brightness), a **Preset** select (scenes with default brightness), and config numbers for White / Red / UV (Custom mix). Recovery buttons: Restart, Safe Mode, Factory Reset. **Internal Temperature** is enabled; other diagnostics are `disabled_by_default`.
+4. **Entities** — one light (**ESP Candle** = RGB strip on/off + colour + brightness in Custom; scene master in presets), a **Preset** select, White/Red/UV level numbers + enable switches, and **RGB Strip**. Recovery buttons: Restart, Safe Mode, Factory Reset. **Internal Temperature** is enabled; other diagnostics are `disabled_by_default`.
 
 ## 4. Effect / preset smoke test (on-device)
 
 The `ESP Candle` light has scene effects: **Warm Glow**, **Natural**, **Ember**, **UV Accent**, **Candle**, **Wifi RSSI**, **Color**, **Magic**. Prefer the **Preset** dropdown (or boot short-press) over raw effect picks.
 
-1. Turn the light on from HA with Preset **Off** — it should start **Candle** at ~40% brightness without a bright white flash. The light toggle stays the master off switch.
+1. Turn the light on from HA with Preset **Off** — it should enter **Custom** (manual). PWM stays at the current slider/enable state; RGB follows the light.
 2. **Candle**: warm whites flicker organically, red ember inverse to flame; RGB off. Master slider dims the whole scene; slider should sit near 40% on entry. Nearby RF motion may gently nudge wind/snuff.
 3. **Wifi RSSI**: steady white level tracks absolute WiFi signal (−88 dBm ≈ dim, −42 dBm ≈ bright). Red fades in below ~40% signal; RGB strip glows green above ~55%. No flicker. Master defaults to ~70%.
 4. **Color**: HSV drift on the strip; entry brightness ~50%. Master slider scales the strip.
 5. **Natural**: static warm whites + soft orange-white RGB, no animation; entry ~50%. Moving the master slider scales both proportionally.
-6. **Presets**: Warm Glow / Ember / UV Accent also set a default master %. On Warm Glow / Natural / UV Accent, channel sliders tweak mix in place (master / RGB scene tint stay put). On Candle / Wifi RSSI / Color / Magic / Ember, a channel slider flips Preset to **Custom** and stops the scene effect. Light toggle Off extinguishes everything and sets Preset to Off.
-7. **Regression — mix vs master**: UV Accent → move **UV Intensity** only — Preset stays UV Accent, master slider unchanged, purple RGB tint stays. Natural → move **White Brightness** only — Preset stays Natural, master unchanged, warm RGB tint stays. Master slider on either preset should dim PWM and RGB together.
-8. **Button**: short-press cycles Warm Glow → Natural → Candle → Wifi RSSI → Color → Magic → …. Hold 3–10s then release to toggle on/off. Hold 10s to factory-reset.
+6. **Presets vs Custom**: while a scene is selected it owns outputs. Moving a White/Red/UV slider or enable, or choosing **Custom**, leaves the scene. In Custom each channel is independent: level × on/off (absolute PWM, not gated by the RGB light). **RGB Strip** gates WS2812s only (colour is preserved when off). Light toggle Off in Custom turns off RGB only; from a scene it extinguishes everything and selects Preset Off.
+7. **Custom channels**: Preset Off or Custom → raise UV (or Red/White) alone — that channel should light immediately without requiring the RGB light on. Setting a slider to 0 or toggling the channel enable off must extinguish that channel. Colour picker works when the light / RGB Strip is on.
+8. **Regression — independent PWM**: Custom → turn the main light off → raise **UV Intensity** — UV should still light. Toggle **RGB Strip** off/on — strip goes dark/lit without stopping White/Red/UV.
+9. **Regression — Off + RGB Strip**: Preset **Off** → turn **RGB Strip** on — strip should light and Preset must flip to **Custom** (not stay Off).
+10. **Regression — Magic channel UI**: select **Magic** — **Red** and **UV** enables should be on (≈40% / ≈55%), **RGB Strip** on, White off. Toggling **Red** off must leave for **Custom**, stop Magic (strip dark, **RGB Strip** off — not solid white), extinguish red PWM, and leave UV at its level if still enabled.
+11. **Button**: short-press cycles Warm Glow → Natural → Candle → Wifi RSSI → Color → Magic → …. Hold 3–10s then release to toggle on/off. Hold 10s to factory-reset.
 
 ### If an effect looks wrong
 

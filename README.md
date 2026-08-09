@@ -2,8 +2,8 @@
 title: ESP32 Candle Firmware
 description: Tea-candle-sized ESP32-S3 LED smart light — Home Assistant via ESPHome (primary) and optional PlatformIO demo.
 tags: [esphome, home-assistant, platformio, hardware-specs, firmware-installation, troubleshooting, led-lighting]
-lastmod: 2026-07-20
-version: 0.4.0
+lastmod: 2026-08-09
+version: 0.5.0
 ---
 
 # ESP32 Candle Firmware
@@ -18,15 +18,16 @@ A tea candle-sized LED smart light for **Home Assistant via ESPHome**, with an o
 
 ## Home Assistant + ESPHome
 
-The primary firmware path. Provision over Bluetooth or USB (Improv), adopt in Home Assistant with a runtime Noise encryption key — no secrets baked into the binary. Controls: one light (master brightness for the whole candle), a Preset scene dropdown, and optional White / Red / UV mix sliders for Custom.
+The primary firmware path. Provision over Bluetooth or USB (Improv), adopt in Home Assistant with a runtime Noise encryption key — no secrets baked into the binary. Controls: one light (RGB + scene master), a Preset dropdown, and White / Red / UV level + enable for Custom.
 
 ![Home Assistant device controls for ESP Candle](media/ha-device-controls.png)
 
 | Control | Role |
 |---|---|
-| **ESP Candle** | Master on/off **and** overall brightness (scales RGB + PWM) |
+| **ESP Candle** | Scene master brightness while a preset is active; in Custom, RGB strip on/off + colour + brightness |
 | **Preset** | Scene: Off, Warm Glow, Natural, Ember, UV Accent, Candle (40%), Wifi RSSI (70%), Color (50%), Magic, Custom |
-| **White / Red / UV** | Mix: under Warm Glow / Natural / UV Accent they tweak that scene in place; under Candle / Wifi RSSI / Color / Magic / Ember they flip Preset to Custom |
+| **White / Red / UV** | Level (%) + enable switch. Any change leaves the scene for **Custom**; PWM is absolute (not gated by the RGB light) |
+| **RGB Strip** | Gates WS2812 output only; colour is preserved when off. Does not affect White/Red/UV |
 | **Restart / Safe Mode / Factory Reset** | Recovery |
 | **Internal Temperature** | ESP32 core temperature |
 
@@ -123,6 +124,8 @@ Checklist against [Made for ESPHome](https://esphome.io/guides/made_for_esphome/
 Next steps when ready to apply: open a PR on [devices.esphome.io](https://github.com/esphome/devices), then email `esphome@openhomefoundation.org` with the PR link.
 
 ## Hardware Specifications
+
+![ESP Candle PCB stack technical illustration](media/technical-illustration.jpg)
 
 ### Core Features
 
@@ -233,7 +236,7 @@ Pinout and caps live in `src/config.h`: PWM 5kHz 12-bit; channel caps white 40%,
 
 ## Release History
 
-See [CHANGELOG.md](CHANGELOG.md) for release notes. Latest tag: `v0.4.0`.
+See [CHANGELOG.md](CHANGELOG.md) for release notes. Latest tag: `v0.5.0`.
 
 ## License
 

@@ -56,49 +56,190 @@ inline uint8_t sample_noise(uint32_t t) {
   return (uint8_t) raw;
 }
 
-// Convenience: clamp to 0..1.
+// ---------------------------------------------------------------------------
+// Output ownership
+//
+// Preset scenes (anything except Off/Custom) own all outputs each effect tick.
+// Custom / manual: each channel is independent —
+//   White/Red/UV  → number % × enable switch  (absolute PWM, NOT gated by RGB)
+//   RGB strip     → ESP Candle light (on/off + color + brightness) when
+//                   rgb_enable is on; black when rgb_enable is off.
+// Moving a channel control exits any scene / Off into Custom.
+// ---------------------------------------------------------------------------
+
 inline float clampf(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
 
-// Master level from the RGB light entity (HA brightness × on/off).
-// Addressable RGB already gets this via color correction; PWM channels we
-// drive with set_level() must multiply by it explicitly.
+// Master from the RGB light — used by *scene* effects only so the HA brightness
+// slider dims the whole scene. Custom PWM must not use this.
 inline float master_level() {
   const auto &v = id(rgb_strip).current_values;
   return clampf(v.get_brightness() * v.get_state());
 }
 
-// Random integer in [lo, hi). ESPHome under ESP-IDF exposes the no-arg C
-// random(), not Arduino's random(min,max), so wrap esphome::random_uint32().
+inline bool rgb_strip_enabled() { return id(rgb_enable).state; }
+
+inline bool is_custom_mode() {
+  return id(candle_preset).current_option() == "Custom";
+}
+
+// Effect RGB write: scene effects honour RGB Strip enable.
+inline void set_effect_rgb(esphome::light::AddressableLight &it,
+                           const esphome::Color &color) {
+  if (rgb_strip_enabled())
+    it.all() = color;
+  else
+    it.all() = esphome::Color(0, 0, 0);
+}
+inline void set_effect_rgb(esphome::light::AddressableLight &it,
+                           const esphome::light::ESPHSVColor &color) {
+  if (rgb_strip_enabled())
+    it.all() = color;
+  else
+    it.all() = esphome::Color(0, 0, 0);
+}
+
 inline int rnd(int lo, int hi) {
   if (hi <= lo) return lo;
   return lo + (int) (esphome::random_uint32() % (uint32_t) (hi - lo));
 }
 
-// Shared PWM write scaled by master brightness.
-inline void set_pwm_mastered(float white, float red, float uv) {
-  float m = master_level();
+inline void write_pwm(float white, float red, float uv, float master) {
+  float m = clampf(master);
   id(pwm_led_1).set_level(clampf(white * m));
   id(pwm_led_2).set_level(clampf(white * m));
   id(pwm_led_4).set_level(clampf(red * m));
   id(pwm_led_3).set_level(clampf(uv * m));
 }
 
-// Mix % from HA channel numbers (0–100). Static scenes read these each tick
-// so White/Red/UV sliders can tweak mix without leaving the preset / touching
-// master brightness (which would also scale RGB via color correction).
+// Scene effects: mix numbers × RGB-light master brightness.
+inline void set_pwm_mastered(float white, float red, float uv) {
+  write_pwm(white, red, uv, master_level());
+}
+
 inline void pwm_from_numbers() {
   set_pwm_mastered(id(white_level).state / 100.0f, id(red_level).state / 100.0f,
                    id(uv_level).state / 100.0f);
 }
 
-// Animated scenes own their PWM; channel sliders flip these to Custom.
-inline bool is_animated_preset(const std::string &preset) {
-  return preset == "Candle" || preset == "Wifi RSSI" || preset == "Color" ||
-         preset == "Magic" || preset == "Ember";
+inline bool is_scene_preset(const std::string &preset) {
+  return preset != "Off" && preset != "Custom";
 }
 
-// Apply current White/Red/UV number states × master (Custom mode / on_state).
-inline void apply_custom_pwm() { pwm_from_numbers(); }
+// Custom PWM: absolute levels × per-channel enables. Independent of RGB light.
+inline void apply_custom_pwm(float white_pct, float red_pct, float uv_pct) {
+  float w = id(white_enable).state ? white_pct / 100.0f : 0.0f;
+  float r = id(red_enable).state ? red_pct / 100.0f : 0.0f;
+  float u = id(uv_enable).state ? uv_pct / 100.0f : 0.0f;
+  write_pwm(w, r, u, 1.0f);
+}
+
+inline void apply_custom_pwm() {
+  apply_custom_pwm(id(white_level).state, id(red_level).state, id(uv_level).state);
+}
+
+// Stop scene effect and darken the strip. Scenes blank entity colour and paint
+// only via the effect buffer — do not invent a white fill (that made Magic →
+// toggle Red jump to solid white at scene brightness). rgb_enable goes false
+// so the UI matches; user turns RGB Strip on when they want Custom colour.
+inline void stop_scene_effect() {
+  const bool held = id(applying_preset);
+  id(applying_preset) = true;
+  {
+    auto stop = id(rgb_strip).make_call();
+    stop.set_effect("None");
+    stop.perform();
+  }
+  id(rgb_enable).publish_state(false);
+  id(rgb_strip).turn_off().perform();
+  if (!held)
+    id(applying_preset) = false;
+}
+
+// RGB Strip switch off (rgb_enable already published false by caller).
+// Scenes: leave the effect running — set_effect_rgb writes black each tick.
+// Custom/Off: turn the light off so WS2812s go dark but colour is preserved
+// for the next turn-on (never set_rgb(0,0,0) — that kills the picker).
+inline void rgb_strip_output_off() {
+  auto preset = std::string(id(candle_preset).current_option().c_str());
+  if (is_scene_preset(preset))
+    return;
+  const bool held = id(applying_preset);
+  id(applying_preset) = true;
+  id(rgb_strip).turn_off().perform();
+  if (!held)
+    id(applying_preset) = false;
+}
+
+// RGB Strip switch on (rgb_enable already published true by caller).
+// Scenes: effect already running — next tick paints RGB again.
+// Custom: turn the light on with effect None; keep existing colour.
+// Off: same light turn-on, then Off→Custom (on_turn_on cannot do this while
+// we hold applying_preset to avoid re-entry).
+inline void rgb_strip_output_on() {
+  auto preset = std::string(id(candle_preset).current_option().c_str());
+  if (is_scene_preset(preset))
+    return;
+  const bool held = id(applying_preset);
+  id(applying_preset) = true;
+  {
+    auto c = id(rgb_strip).turn_on();
+    c.set_effect("None");
+    const auto &v = id(rgb_strip).current_values;
+    if (v.get_red() + v.get_green() + v.get_blue() < 0.01f)
+      c.set_rgb(1.0f, 1.0f, 1.0f);
+    if (v.get_brightness() < 0.01f)
+      c.set_brightness(0.5f);
+    c.perform();
+  }
+  if (!held)
+    id(applying_preset) = false;
+
+  // Mirror light on_turn_on: powering the strip from Off enters Custom.
+  if (preset == "Off") {
+    auto call = id(candle_preset).make_call();
+    call.set_option("Custom");
+    call.perform();
+  }
+}
+
+// Exit any scene into Custom. Custom set_action stops the effect and applies
+// PWM. No-op if already Custom (do not re-stop / flash the strip).
+inline void ensure_custom_preset() {
+  if (is_custom_mode())
+    return;
+  auto call = id(candle_preset).make_call();
+  call.set_option("Custom");
+  call.perform();
+}
+
+// Device-page channel slider. `x` for the moved channel is already substituted.
+// Any user change leaves the scene so channels are independently controllable.
+inline void on_channel_slider(float white_pct, float red_pct, float uv_pct,
+                              char which) {
+  if (id(applying_preset))
+    return;
+
+  // Auto-enable the channel when its level goes above zero.
+  if (which == 'w' && white_pct > 0.5f)
+    id(white_enable).publish_state(true);
+  if (which == 'r' && red_pct > 0.5f)
+    id(red_enable).publish_state(true);
+  if (which == 'u' && uv_pct > 0.5f)
+    id(uv_enable).publish_state(true);
+
+  ensure_custom_preset();
+  // Use explicit percents — template number .state is still the old value
+  // until set_action returns.
+  apply_custom_pwm(white_pct, red_pct, uv_pct);
+}
+
+inline void on_channel_enable_changed() {
+  if (id(applying_preset))
+    return;
+  // Any manual enable toggle leaves the scene for independent control.
+  ensure_custom_preset();
+  apply_custom_pwm();
+}
 
 // ===========================================================================
 // NATURAL - static warm scene. Whites/red/UV from channel numbers × master;
@@ -114,7 +255,7 @@ namespace natural {
   inline void tick(esphome::light::AddressableLight &it, bool initial) {
     (void) initial;
     pwm_from_numbers();
-    it.all() = esphome::light::ESPHSVColor(RGB_H, RGB_S, RGB_V);
+    set_effect_rgb(it, esphome::light::ESPHSVColor(RGB_H, RGB_S, RGB_V));
   }
 }  // namespace natural
 
@@ -132,7 +273,7 @@ namespace warm_glow {
 
 // ===========================================================================
 // UV ACCENT - static UV wash + faint purple RGB tint. Tracks master.
-// Default mix UV=50% at master 40%. Channel sliders change mix only.
+// Default mix UV=50% at master 40%. Any channel change leaves for Custom.
 // ===========================================================================
 namespace uv_accent {
   static constexpr uint8_t RGB_H = 192;
@@ -142,7 +283,7 @@ namespace uv_accent {
   inline void tick(esphome::light::AddressableLight &it, bool initial) {
     (void) initial;
     pwm_from_numbers();
-    it.all() = esphome::light::ESPHSVColor(RGB_H, RGB_S, RGB_V);
+    set_effect_rgb(it, esphome::light::ESPHSVColor(RGB_H, RGB_S, RGB_V));
   }
 }  // namespace uv_accent
 
@@ -523,7 +664,7 @@ namespace wifi_rssi {
 
     uint8_t gv = (uint8_t)(GREEN_V_MAX * clampf(s.out_g) + 0.5f);
     if (gv > 0)
-      it.all() = esphome::light::ESPHSVColor(GREEN_H, GREEN_S, gv);
+      set_effect_rgb(it, esphome::light::ESPHSVColor(GREEN_H, GREEN_S, gv));
     else
       it.all() = esphome::Color(0, 0, 0);
   }
@@ -687,6 +828,8 @@ namespace color {
         it[i] = c + p + nx;
       }
     }
+    if (!rgb_strip_enabled())
+      it.all() = esphome::Color(0, 0, 0);
 
     id(pwm_led_1).set_level(0.0f);
     id(pwm_led_2).set_level(0.0f);
@@ -860,6 +1003,8 @@ namespace magic {
         }
       }
     }
+    if (!rgb_strip_enabled())
+      it.all() = esphome::Color(0, 0, 0);
 
     id(pwm_led_1).set_level(0.0f);
     id(pwm_led_2).set_level(0.0f);
