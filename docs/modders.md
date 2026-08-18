@@ -2,7 +2,7 @@
 
 This document covers the optional hardware features of the ESP Candle PCB that are **not** enabled in the factory firmware by default: the I2C bus, the extra GPIO switches, the local web server, and SNTP/Last-Restart. These are aimed at tinkerers and modders who fork the YAML.
 
-The factory firmware (`esphome/espcandle.factory.factory.yaml`) exposes one light ("ESP Candle"), a Preset select, channel level numbers, and a small diagnostic set. Everything below is opt-in.
+The factory firmware (`esphome/espcandle.factory.factory.yaml`) exposes one light ("ESP Candle"), a Preset select, White/Red/UV level numbers + enable switches, RGB Strip, and a small diagnostic set. Everything below is opt-in. Boot is always Preset Off (no restore of last scene or channel levels).
 
 ## Where things live
 

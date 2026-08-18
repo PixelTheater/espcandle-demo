@@ -117,9 +117,11 @@ pulls both `firmware-espcandle-esphome-<version>.bin` and
 > - **`SUPPORT_SITE_PAT`** (on **this** repo) lets the candle *dispatch* to the
 >   support repo. This repo is under `PixelTheater`, the support site under
 >   `soliddifference`; the built-in `GITHUB_TOKEN` **cannot** dispatch across
->   orgs. Create a fine-grained PAT with the support repo's
->   **Metadata: read + Contents: read/write** (repository_dispatch rides on
->   Contents), store it here as `SUPPORT_SITE_PAT`, and use it below.
+>   orgs. Create a **classic** PAT (`ghp_…`) with the `repo` scope from an
+>   account with write access to the support repo, store it here as
+>   `SUPPORT_SITE_PAT`, and use it below. (A fine-grained PAT scoped to the
+>   personal account failed dispatch with "Repository not found"; classic
+>   works — same pattern as the support repo's ghcr pull secret.)
 > - **`CANDLE_REPO_TOKEN`** (on the **support** repo) is only needed **if this
 >   repo is private** — the support workflow reads the release assets with
 >   `GITHUB_TOKEN`, which can read *public* cross-org repos but not private ones.
@@ -135,9 +137,9 @@ pulls both `firmware-espcandle-esphome-<version>.bin` and
 `workflow_dispatch` for republish). It builds both factory images, uploads the
 renamed assets to the release, and fires the dispatch above.
 
-**One-time setup:** add repo secret `SUPPORT_SITE_PAT` (fine-grained PAT on
-`soliddifference/support.soliddifference.com` with Contents read/write — see
-above). Without it, the Notify step fails after the bins are already uploaded.
+**One-time setup:** add repo secret `SUPPORT_SITE_PAT` (classic `ghp_` PAT
+with `repo` scope, write access to the support repo — see above). Without it,
+the Notify step fails after the bins are already uploaded.
 
 **To ship `v0.3.0` (or later):**
 
@@ -182,7 +184,11 @@ image and a store link to render the Candle's card.
 - [x] Repo is public — no `CANDLE_REPO_TOKEN` needed on the support repo
 - [x] Product photo handed over (already in support repo)
 - [x] GitHub Release `v0.2.0` published (bins uploaded; support sync may be manual)
-- [ ] `SUPPORT_SITE_PAT` secret created on this repo (cross-org PAT with Contents
-      read/write on `soliddifference/support.soliddifference.com`)
-- [ ] Support-site manifests return 200 for the latest version; Candle card active
+- [x] `SUPPORT_SITE_PAT` secret exists on this repo and is wired into
+      `publish-firmware.yml`. Fixed 2026-08-17: the original fine-grained PAT
+      failed every dispatch (“Repository not found, OR token has insufficient
+      permissions”); a classic `ghp_` PAT with `repo` scope works. The full
+      chain (publish → dispatch → sync → deploy) is verified for v0.5.0.
+- [x] Support-site manifests return 200 for the latest version; Candle card
+      active (site `latest` = 0.5.0 as of 2026-08-17)
 - [ ] Candle store-page URL sent to the support-site maintainer

@@ -2,7 +2,7 @@
 title: ESP32 Candle Firmware
 description: Tea-candle-sized ESP32-S3 LED smart light — Home Assistant via ESPHome (primary) and optional PlatformIO demo.
 tags: [esphome, home-assistant, platformio, hardware-specs, firmware-installation, troubleshooting, led-lighting]
-lastmod: 2026-08-09
+lastmod: 2026-08-17
 version: 0.5.0
 ---
 
@@ -31,7 +31,7 @@ The primary firmware path. Provision over Bluetooth or USB (Improv), adopt in Ho
 | **Restart / Safe Mode / Factory Reset** | Recovery |
 | **Internal Temperature** | ESP32 core temperature |
 
-Boot button: short-press cycles Warm Glow → Natural → Candle → Wifi RSSI → Color → Magic; hold 3–10s then release to toggle; hold 10s for factory reset.
+Boot button: short-press cycles Warm Glow → Natural → Candle → Wifi RSSI → Color → Magic; hold 3–10s then release to toggle; hold 10s for factory reset. Power cycle or firmware reboot returns to Preset Off (all outputs dark).
 
 ### End-user setup (no YAML)
 

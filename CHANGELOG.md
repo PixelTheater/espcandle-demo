@@ -6,6 +6,14 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 ## [Unreleased]
 
+### Changed
+
+- Entering Custom only stops a running scene effect. Off → light on and Off →
+  RGB Strip on keep the strip lit (first attempt) instead of turning it back off.
+- Boot is always Preset **Off**, all PWM/enables at zero (`ALWAYS_OFF`, no
+  restore of Preset or channel levels). A high-power scene cannot reboot-loop
+  after a brownout. Power cycle or firmware reboot returns to Off.
+
 ## [0.5.0] - 2026-08-09
 
 ### Added

@@ -122,7 +122,12 @@ inline void pwm_from_numbers() {
 }
 
 inline bool is_scene_preset(const std::string &preset) {
-  return preset != "Off" && preset != "Custom";
+  return !preset.empty() && preset != "Off" && preset != "Custom";
+}
+
+// Addressable effects are 1-indexed; 0 means None (Off / Custom / not started).
+inline bool scene_effect_active() {
+  return id(rgb_strip).get_current_effect_index() != 0;
 }
 
 // Custom PWM: absolute levels × per-channel enables. Independent of RGB light.
@@ -137,11 +142,16 @@ inline void apply_custom_pwm() {
   apply_custom_pwm(id(white_level).state, id(red_level).state, id(uv_level).state);
 }
 
-// Stop scene effect and darken the strip. Scenes blank entity colour and paint
-// only via the effect buffer — do not invent a white fill (that made Magic →
-// toggle Red jump to solid white at scene brightness). rgb_enable goes false
-// so the UI matches; user turns RGB Strip on when they want Custom colour.
+// Stop a running scene effect and darken the strip. Scenes blank entity colour
+// and paint only via the effect buffer — do not invent a white fill (that made
+// Magic → toggle Red jump to solid white at scene brightness). rgb_enable goes
+// false so the UI matches; user turns RGB Strip on when they want Custom colour.
+//
+// No-op when no scene effect is running (Off → Custom, RGB Strip on from Off).
+// Killing RGB in that case turned the light back off on the first attempt.
 inline void stop_scene_effect() {
+  if (!scene_effect_active())
+    return;
   const bool held = id(applying_preset);
   id(applying_preset) = true;
   {
@@ -236,8 +246,16 @@ inline void on_channel_slider(float white_pct, float red_pct, float uv_pct,
 inline void on_channel_enable_changed() {
   if (id(applying_preset))
     return;
-  // Any manual enable toggle leaves the scene for independent control.
-  ensure_custom_preset();
+  auto preset = std::string(id(candle_preset).current_option().c_str());
+  if (is_scene_preset(preset)) {
+    // Leave the scene so channels are independently controllable.
+    ensure_custom_preset();
+  } else if (preset == "Off" || preset.empty()) {
+    // User turning a channel on from Off → Custom. All-off (boot ALWAYS_OFF
+    // re-fires turn_off) must stay Off, or every reboot would land in Custom.
+    if (id(white_enable).state || id(red_enable).state || id(uv_enable).state)
+      ensure_custom_preset();
+  }
   apply_custom_pwm();
 }
 

@@ -24,7 +24,8 @@
 # HA entities: "ESP Candle" light (scene master in presets; RGB strip in Custom),
 # Preset select, White/Red/UV level numbers + enable switches, and RGB Strip
 # enable. Scenes own all outputs; any channel change enters Custom. PWM channels
-# are driven via ledc.set_level(). See docs/modders.md.
+# are driven via ledc.set_level(). Boot is always Preset Off (all outputs dark).
+# See docs/modders.md.
 
 substitutions:
   name: esp32-candle
@@ -59,10 +60,11 @@ substitutions:
   uv_max_power:    "40%"
   red_max_power:   "80%"
 
-  # Persistence: which state lights/switches restore to after a power cut.
-  # Options: ALWAYS_ON, ALWAYS_OFF, RESTORE_DEFAULT_ON, RESTORE_DEFAULT_OFF.
-  light_restore_mode:  RESTORE_DEFAULT_OFF
-  switch_restore_mode: RESTORE_DEFAULT_OFF
+  # Boot is always dark. Restoring a high PWM scene after a brownout would
+  # reboot-loop. Options: ALWAYS_ON, ALWAYS_OFF, RESTORE_DEFAULT_ON,
+  # RESTORE_DEFAULT_OFF. Override in a per-device YAML only if you accept that.
+  light_restore_mode:  ALWAYS_OFF
+  switch_restore_mode: ALWAYS_OFF
 
 esphome:
   name: "${name}"
@@ -80,6 +82,25 @@ esphome:
   # See esphome/includes/candle_effects.h.
   includes:
     - includes/candle_effects.h
+  on_boot:
+    # After LEDC exists: force PWM off before Wi-Fi/BLE load, so a previous
+    # high-power state cannot brownout-loop. Late trigger forces Preset Off
+    # if a restore race left Custom/a scene selected.
+    - priority: 600
+      then:
+        - lambda: |-
+            id(pwm_led_1).set_level(0.0f);
+            id(pwm_led_2).set_level(0.0f);
+            id(pwm_led_3).set_level(0.0f);
+            id(pwm_led_4).set_level(0.0f);
+    - priority: -100
+      then:
+        - lambda: |-
+            if (id(candle_preset).current_option() != "Off") {
+              auto call = id(candle_preset).make_call();
+              call.set_option("Off");
+              call.perform();
+            }
 
 # Custom ESP Candle PCB. ESPHome needs a board name from its built-in list;
 # esp32-s3-devkitc1-n4r2 matches our SoC/memory (4MB flash, 2MB quad PSRAM).
@@ -331,7 +352,8 @@ select:
     id: candle_preset
     icon: mdi:candle
     optimistic: true
-    restore_value: true
+    # Do not restore last scene — a high-power preset after brownout would loop.
+    restore_value: false
     initial_option: "Off"
     options:
       - "Off"
@@ -403,8 +425,8 @@ select:
             sync_levels(0, 40, 55);
             soft_effect("Magic", 0.45f, true);
           } else if (x == "Custom") {
-            // Manual mode: stop scene effect; PWM = levels × enables (absolute).
-            // Do not auto-flip enables — sliders and scene entry own that.
+            // Manual mode. Stop a running scene (RGB off — no white jump).
+            // From Off the effect is already None; leave RGB as the user set it.
             espcandle::stop_scene_effect();
             espcandle::apply_custom_pwm();
           }
@@ -414,6 +436,7 @@ select:
 # Scenes own outputs while selected. Any slider/enable change → Custom.
 # In Custom, PWM is absolute (level × enable, not gated by the RGB light).
 # set_action uses `x` because optimistic publish_state runs after set_action.
+# Levels and Preset do not restore: boot is always Off / 0% (brownout-loop).
 number:
   - platform: template
     name: "White Brightness"
@@ -425,7 +448,7 @@ number:
     step: 1
     initial_value: 0
     optimistic: true
-    restore_value: true
+    restore_value: false
     set_action:
       - lambda: |-
           espcandle::on_channel_slider(x, id(red_level).state, id(uv_level).state, 'w');
@@ -440,7 +463,7 @@ number:
     step: 1
     initial_value: 0
     optimistic: true
-    restore_value: true
+    restore_value: false
     set_action:
       - lambda: |-
           espcandle::on_channel_slider(id(white_level).state, x, id(uv_level).state, 'r');
@@ -455,7 +478,7 @@ number:
     step: 1
     initial_value: 0
     optimistic: true
-    restore_value: true
+    restore_value: false
     set_action:
       - lambda: |-
           espcandle::on_channel_slider(id(white_level).state, id(red_level).state, x, 'u');
