@@ -6,7 +6,28 @@ This project follows [Semantic Versioning](https://semver.org/). Release entries
 
 ## [Unreleased]
 
+### Added
+
+- **Top Board** select (config, stored across reboots and updates): v1.3, v1.4
+  or v1.6, the version printed on the LED board. It sets the white channel for
+  that top: v1.3 (PAM2804 whites) at 500 Hz with min power 20 % so the bottom
+  of the slider is not a dead zone, max 50 %; v1.4 as before (5 kHz, 40 %);
+  v1.6 (50 mA, 2700 K CRI 97 LEDs) at 4 kHz with 14-bit PWM, max 100 %. The
+  caps give about the same white at 100 % on every top, so scenes look alike.
+  Default `top_board: v1.4`; `make factory-run TOP=v1.6` flashes with another
+  default. Bases v1.3, v1.3.1 and v1.6 need no setting.
+- Standalone firmware: `ESPCANDLE_TOP` (13, 14, 16) and PlatformIO envs
+  `esp32s3-top-v13` and `esp32s3-top-v16` with the same white settings;
+  `esp32s3` stays the v1.4 build. CI builds all three.
+
 ### Changed
+
+- The `white_max_power` substitution is replaced by `white_v13_*`,
+  `white_v14_*` and `white_v16_*` (frequency, min power, max power per top).
+  A per-device YAML that set `white_max_power` should set the matching
+  `white_v1x_max_power` instead.
+- The white LEDC outputs are pinned to channels 0 and 1 (UV 2, red 3) so a
+  top's white frequency never changes UV or red.
 
 - Entering Custom only stops a running scene effect. Off → light on and Off →
   RGB Strip on keep the strip lit (first attempt) instead of turning it back off.

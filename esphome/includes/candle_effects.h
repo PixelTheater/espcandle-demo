@@ -130,6 +130,20 @@ inline bool scene_effect_active() {
   return id(rgb_strip).get_current_effect_index() != 0;
 }
 
+// Top Board profile for the two whites (script apply_top_board). min_power is
+// set to 0 first so the new max is not clamped against the old min. Both whites
+// share LEDC timer 0, so both get the frequency (each output keeps its own bit
+// depth). Levels written before this keep their old duty until rewritten.
+inline void apply_white_profile(float frequency_hz, float min_power, float max_power) {
+  for (auto *out : {&id(pwm_led_1), &id(pwm_led_2)}) {
+    out->set_min_power(0.0f);
+    out->set_max_power(max_power);
+    out->set_min_power(min_power);
+    out->set_zero_means_zero(true);
+    out->update_frequency(frequency_hz);
+  }
+}
+
 // Custom PWM: absolute levels × per-channel enables. Independent of RGB light.
 inline void apply_custom_pwm(float white_pct, float red_pct, float uv_pct) {
   float w = id(white_enable).state ? white_pct / 100.0f : 0.0f;
@@ -356,9 +370,11 @@ namespace candle {
   static constexpr float GUST_SPEED_MULT_MAX   = 1.4f;
   static constexpr float SNUFF_RATE_MULT_MAX   = 1.25f;
 
-  // white_max_power on the ledc outputs (must match espcandle.base.yaml).
-  // Standalone writes absolute fractions of MAX_DUTY; ESPHome set_level is
-  // relative to max_power, so divide by WHITE_MAX to restore the same watts.
+  // White peaks below are fractions of the v1.4 top's full duty, as in
+  // standalone src/config.h. set_level(1.0) is that top's 40 % cap, and every
+  // Top Board profile caps its whites at about the same light (v1.6: 100 % of
+  // 50 mA), so dividing by 0.40 gives the same flame on every top. This is a
+  // fixed reference, not the selected top's max power: keep it at 0.40.
   static constexpr float WHITE_MAX = 0.40f;
 
   // Per-sub-mode brightness/depth/speed/smoothing.
@@ -575,6 +591,7 @@ namespace candle {
 // RGB strip starts glowing green as the signal gets strong. UV off.
 // ===========================================================================
 namespace wifi_rssi {
+  // Same fixed reference as candle::WHITE_MAX (v1.4's 40 % cap).
   static constexpr float WHITE_MAX = 0.40f;
 
   // Absolute RSSI → 0..1 signal. Typical STA range ~-90 … -40 dBm.

@@ -28,6 +28,12 @@ i2c:
 
 After enabling, add sensors under `sensor:` (e.g. `bme280`, `sht3x`, `tsl2561`). The `scan: true` option logs discovered I2C addresses at boot — useful for bring-up.
 
+Pull-ups: the v1.6 base has 4.7 kΩ pull-ups to 3.3 V on SDA and SCL. The v1.3 and v1.3.1 bases have none, so use a module with its own pull-ups (most Qwiic boards have them), or fit external ones.
+
+## Top board versions
+
+The **Top Board** select (v1.3 / v1.4 / v1.6, config) changes only the two warm-white outputs `pwm_led_1`/`pwm_led_2`: their PWM frequency, min power and max power, from the `white_v13_*`, `white_v14_*` and `white_v16_*` substitutions (README, "Board versions"). The whites sit on LEDC channels 0 and 1, alone on one timer, so the frequency change leaves UV and red alone; keep them there if you add outputs. Effects and sliders work in the same light units on every top: level 1.0 is about the white of the v1.4 top at its 40 % cap. To tune one candle (for example a v1.3 whose whites only light from 22 %), override that top's substitutions in its per-device YAML.
+
 ## Extra GPIO 10 / 11 / 12
 
 Three GPIO pins are exposed as controllable switches in the default config (commented out). These are intended for expansion modules, fans, or external indicators.

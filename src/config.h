@@ -12,16 +12,51 @@ inline constexpr int RED_LED      = 3;   // GPIO18
 inline constexpr int WS2812_PIN   = 33;
 inline constexpr int BUTTON_PIN   = 0;
 
-// PWM carrier frequency and resolution for mono LED channels.
+// PWM carrier frequency and resolution for mono LED channels (UV and red; the
+// whites use WHITE_PWM_FREQ below).
 // Higher resolution = more brightness steps = no staircase at low brightness.
-// ESP32-S3 LEDC supports up to 14-bit at 5 kHz.  12-bit gives 4095 steps.
+// ESP32-S3 LEDC supports up to 13-bit at 5 kHz.  12-bit gives 4095 steps.
 inline constexpr double  PWM_FREQ       = 5000.0;
 inline constexpr uint8_t PWM_RESOLUTION = 12;
 inline constexpr int     MAX_DUTY       = (1 << PWM_RESOLUTION) - 1; // 4095
 
+// ─── Top board ────────────────────────────────────────────────────────────────
+//
+// The LED board on top of the stack (version on its silkscreen). Only the two
+// warm whites differ between versions; the base boards (v1.3, v1.3.1, v1.6)
+// need no setting. Build for a top with -DESPCANDLE_TOP=13, 14 or 16
+// (platformio.ini has an env per top). Same numbers as the white_v1x_*
+// substitutions in esphome/espcandle.base.yaml.
+//
+//   v1.3: PAM2804 buck at 100 mA; lights from about 20 % duty at 500 Hz.
+//   v1.4: BCR421U linear driver at about 88 mA (REXT 10 ohm); 40 % cap.
+//   v1.6: BCR421U at about 50 mA (REXT 20 ohm), 2700 K CRI 97 LEDs:
+//         100 % gives about the white of v1.4's 40 %.
+//
+// WHITE_MIN_POWER skips the driver's dead zone (0 stays off); WHITE_MAX_POWER
+// caps each top at about the same white. Both are fractions of full duty.
+#ifndef ESPCANDLE_TOP
+#define ESPCANDLE_TOP 14
+#endif
+#if ESPCANDLE_TOP == 13
+inline constexpr double WHITE_PWM_FREQ  = 500.0;
+inline constexpr float  WHITE_MIN_POWER = 0.20f;
+inline constexpr float  WHITE_MAX_POWER = 0.50f;
+#elif ESPCANDLE_TOP == 14
+inline constexpr double WHITE_PWM_FREQ  = 5000.0;
+inline constexpr float  WHITE_MIN_POWER = 0.0f;
+inline constexpr float  WHITE_MAX_POWER = 0.40f;
+#elif ESPCANDLE_TOP == 16
+inline constexpr double WHITE_PWM_FREQ  = 4000.0;
+inline constexpr float  WHITE_MIN_POWER = 0.0f;
+inline constexpr float  WHITE_MAX_POWER = 1.0f;
+#else
+#error "ESPCANDLE_TOP must be 13, 14 or 16"
+#endif
+
 // Per-channel hard brightness caps (0–100 %).
 // PWM duty never exceeds dutyFromPercent(cap), regardless of mode requests.
-inline constexpr int BRIGHTNESS_MAX_WHITE = 40;
+inline constexpr int BRIGHTNESS_MAX_WHITE = (int)(WHITE_MAX_POWER * 100.0f + 0.5f);
 inline constexpr int BRIGHTNESS_MAX_UV    = 75;
 inline constexpr int BRIGHTNESS_MAX_RED   = 80;
 
@@ -45,6 +80,25 @@ inline constexpr int dutyFromPercent(int pct) {
     return (MAX_DUTY * pct) / 100;
 }
 
+// PWM frequency for an LED_PINS[] index: the whites at their top's frequency.
+// Attach the whites first (indices 0 and 1) so they share an LEDC timer.
+inline constexpr double pwmFreqFor(int ledIndex) {
+    return (ledIndex == WHITE_LED_1 || ledIndex == WHITE_LED_2) ? WHITE_PWM_FREQ : PWM_FREQ;
+}
+
+// White light → duty count for the selected top. `ref` is light as a fraction
+// of the v1.4 top's full duty, the unit the CANDLE_*_BRIGHTNESS constants use;
+// v1.4's 40 % cap is the full white on every top. Mirrors ESPHome's
+// min/max power scaling: 0 stays off, anything above starts at the min power.
+inline constexpr float WHITE_REF_FULL = 0.40f;
+inline uint32_t whiteDuty(float ref) {
+    if (ref <= 0.0f) return 0;
+    float level = ref / WHITE_REF_FULL;
+    if (level > 1.0f) level = 1.0f;
+    float duty = WHITE_MIN_POWER + level * (WHITE_MAX_POWER - WHITE_MIN_POWER);
+    return (uint32_t)(duty * (float)MAX_DUTY + 0.5f);
+}
+
 
 // ─── Candle mode ──────────────────────────────────────────────────────────────
 //
@@ -52,7 +106,8 @@ inline constexpr int dutyFromPercent(int pct) {
 // Each sub-mode uses 1D Perlin noise (FastLED inoise8) sampled at a moving
 // time position to produce organic, smooth brightness variation.
 //
-// Brightness values are 0.0–1.0 fractions of MAX_DUTY.
+// Brightness values are 0.0–1.0 fractions of MAX_DUTY; for the whites, of the
+// v1.4 top's full duty (whiteDuty() maps them to the selected top).
 // Speed values are Perlin time units advanced per millisecond.
 // Smoothing is an output lerp factor per ms (lower = slower / more sluggish).
 //
@@ -97,7 +152,7 @@ inline constexpr float CANDLE_SNUFF_RECOVER  = 0.08f; // lerp per ms back to nor
 // ── CALM sub-mode ─────────────────────────────────────────────────────────────
 // Smooth, barely-moving flame. Low Perlin speed, narrow brightness band.
 // A second octave at 3x speed and 25% weight adds gentle irregularity.
-inline constexpr float CANDLE_CALM_BRIGHTNESS  = 0.07f;  // peak output (fraction of MAX_DUTY)
+inline constexpr float CANDLE_CALM_BRIGHTNESS  = 0.07f;  // peak output (fraction of v1.4's full duty; see whiteDuty)
 inline constexpr float CANDLE_CALM_DEPTH       = 0.60f;  // noise modulation depth (floor = peak*(1-depth))
 inline constexpr float CANDLE_CALM_SPEED       = 0.018f; // primary Perlin advance per ms
 inline constexpr float CANDLE_CALM_SPEED2      = 0.07f;  // secondary octave speed

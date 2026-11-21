@@ -15,6 +15,11 @@
 ESPHOME ?= esphome
 DEVICE  ?= candle-test
 YAML     = $(DEVICE).yaml
+# Top Board default for a fresh flash (v1.3, v1.4 or v1.6), e.g.
+#   make factory-run TOP=v1.6
+# A candle that already stored a Top Board choice keeps it.
+TOP     ?=
+SUBS     = $(if $(TOP),-s top_board $(TOP))
 FACTORY_YAML := espcandle.factory.factory.yaml
 ALL_CONFIGS := espcandle.base.yaml espcandle.example.yaml espcandle.factory.yaml espcandle.factory.factory.yaml
 
@@ -24,13 +29,13 @@ version:
 	@$(ESPHOME) version
 
 config:
-	$(ESPHOME) config $(YAML)
+	$(ESPHOME) $(SUBS) config $(YAML)
 
 compile:
-	$(ESPHOME) compile $(YAML)
+	$(ESPHOME) $(SUBS) compile $(YAML)
 
 run:
-	$(ESPHOME) run $(YAML)
+	$(ESPHOME) $(SUBS) run $(YAML)
 
 logs:
 	$(ESPHOME) logs $(YAML)
@@ -42,13 +47,13 @@ clean:
 # espcandle.factory.factory.yaml (same as factory until HTTP
 # self-update is re-enabled with a published manifest).
 factory-config:
-	$(ESPHOME) config $(FACTORY_YAML)
+	$(ESPHOME) $(SUBS) config $(FACTORY_YAML)
 
 factory: factory-config
-	$(ESPHOME) compile $(FACTORY_YAML)
+	$(ESPHOME) $(SUBS) compile $(FACTORY_YAML)
 
 factory-run: factory
-	$(ESPHOME) run $(FACTORY_YAML)
+	$(ESPHOME) $(SUBS) run $(FACTORY_YAML)
 
 # Automated smoke test (no hardware required). Validates every config and
 # compiles the factory binary. Use before pushing or opening a PR. For the
