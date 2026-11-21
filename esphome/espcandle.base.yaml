@@ -25,6 +25,8 @@
 # Preset select, White/Red/UV level numbers + enable switches, and RGB Strip
 # enable. Scenes own all outputs; any channel change enters Custom. PWM channels
 # are driven via ledc.set_level(). Boot is always Preset Off (all outputs dark).
+# A Top Board select (config) sets how the whites are driven for the LED board
+# fitted (v1.3, v1.4, v1.6); it is stored across reboots and updates.
 # See docs/modders.md.
 
 substitutions:
@@ -53,10 +55,37 @@ substitutions:
   i2c_scl_pin:   GPIO9
   button_pin:    GPIO0    # boot button
 
-  # Power caps — white/red aligned with standalone src/config.h.
-  # UV ceiling kept lower than the demo's 75%: 365nm looks very bright in a
-  # tea-light and was harsh at the higher product preset levels.
-  white_max_power: "40%"
+  # Top board: the LED board on top of the stack (its version is on the silk).
+  # It sets how the two warm whites are driven; the base boards (v1.3, v1.3.1,
+  # v1.6) need no setting. The Top Board select in Home Assistant stores the
+  # choice; this is its default on a freshly flashed candle. v1.4 is the safe
+  # default: a v1.6 top is only dimmer with it, while v1.6 settings on a v1.4
+  # top drive its whites at their full 88 mA.
+  top_board: "v1.4"
+
+  # White channel per top board: PWM frequency (Hz), min power and max power
+  # (fractions of full duty). Level 0 is always off; any level above 0 starts
+  # at min power, which skips a driver's dead zone. The max powers give about
+  # the same white at 100 % on every top, so scenes look alike on all of them.
+  #   v1.3: PAM2804 buck at 100 mA (1 ohm sense). Lights from about 20 % duty
+  #         at 500 Hz (bench, 2026-02); faster PWM leaves it dark.
+  #   v1.4: BCR421U linear driver at about 88 mA (REXT 10 ohm); 40 % cap.
+  #   v1.6: BCR421U at about 50 mA (REXT 20 ohm), 2700 K CRI 97 LEDs with
+  #         about 0.7x the light per mA: 100 % is about v1.4's 40 %. 4 kHz
+  #         keeps 14-bit PWM (5 kHz drops to 13) for finer low-end steps.
+  white_v13_frequency: "500"
+  white_v13_min_power: "0.20"
+  white_v13_max_power: "0.50"
+  white_v14_frequency: "5000"
+  white_v14_min_power: "0.0"
+  white_v14_max_power: "0.40"
+  white_v16_frequency: "4000"
+  white_v16_min_power: "0.0"
+  white_v16_max_power: "1.0"
+
+  # UV and red caps (the same circuits on every top). UV ceiling kept lower
+  # than the standalone demo's 75%: 365nm looks very bright in a tea-light and
+  # was harsh at the higher product preset levels.
   uv_max_power:    "40%"
   red_max_power:   "80%"
 
@@ -86,6 +115,8 @@ esphome:
     # After LEDC exists: force PWM off before Wi-Fi/BLE load, so a previous
     # high-power state cannot brownout-loop. Late trigger forces Preset Off
     # if a restore race left Custom/a scene selected.
+    # Then apply the stored Top Board (LEDC and the select are both set up by
+    # now), before anything can light.
     - priority: 600
       then:
         - lambda: |-
@@ -93,6 +124,12 @@ esphome:
             id(pwm_led_2).set_level(0.0f);
             id(pwm_led_3).set_level(0.0f);
             id(pwm_led_4).set_level(0.0f);
+        - script.execute:
+            id: apply_top_board
+            index: !lambda "return id(top_board).active_index().value_or(1);"
+        - globals.set:
+            id: top_board_ready
+            value: "true"
     - priority: -100
       then:
         - lambda: |-
@@ -168,24 +205,35 @@ mdns:
 # -- PWM outputs ------------------------------------------------------------
 # Owned exclusively by effects, Preset select, and channel number entities
 # via set_level(). No monochromatic light wrappers (avoids dual writers).
+#
+# LEDC channels share a timer in pairs (0+1, 2+3), so the whites sit on 0 and
+# 1, alone on their timer: the Top Board profile changes their frequency
+# without touching UV and red. The white frequency and limits below are v1.4's
+# and only hold until on_boot applies the stored Top Board.
 output:
   - platform: ledc
     pin: ${white1_pin}
     id: pwm_led_1
-    frequency: "5000Hz"
-    max_power: ${white_max_power}
+    channel: 0
+    frequency: "${white_v14_frequency}Hz"
+    max_power: ${white_v14_max_power}
+    zero_means_zero: true
   - platform: ledc
     pin: ${white2_pin}
     id: pwm_led_2
-    frequency: "5000Hz"
-    max_power: ${white_max_power}
+    channel: 1
+    frequency: "${white_v14_frequency}Hz"
+    max_power: ${white_v14_max_power}
+    zero_means_zero: true
   - platform: ledc
     pin: ${uv_pin}
     id: pwm_led_3
+    channel: 2
     max_power: ${uv_max_power}
   - platform: ledc
     pin: ${red_pin}
     id: pwm_led_4
+    channel: 3
     max_power: ${red_max_power}
 
 # Guard so channel number set_action / light on_turn_off do not fight Preset.
@@ -194,6 +242,43 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  # Set once on_boot has applied the stored Top Board; later changes to the
+  # select apply at once (the restore during setup is left to on_boot).
+  - id: top_board_ready
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+# Top Board profile: white PWM frequency and limits for the select's index
+# (0 = v1.3, 1 = v1.4, 2 = v1.6). Re-applies Custom levels so a change shows
+# at once; scenes rewrite PWM on their next tick.
+script:
+  - id: apply_top_board
+    parameters:
+      index: int
+    then:
+      - lambda: |-
+          float hz, lo, hi;
+          const char *top;
+          switch (index) {
+            case 0:
+              top = "v1.3";
+              hz = ${white_v13_frequency}; lo = ${white_v13_min_power}; hi = ${white_v13_max_power};
+              break;
+            case 2:
+              top = "v1.6";
+              hz = ${white_v16_frequency}; lo = ${white_v16_min_power}; hi = ${white_v16_max_power};
+              break;
+            default:
+              top = "v1.4";
+              hz = ${white_v14_frequency}; lo = ${white_v14_min_power}; hi = ${white_v14_max_power};
+              break;
+          }
+          espcandle::apply_white_profile(hz, lo, hi);
+          ESP_LOGI("espcandle", "Top board %s: white PWM %.0f Hz, %.0f-%.0f %% duty", top, hz,
+                   lo * 100.0f, hi * 100.0f);
+          if (espcandle::is_custom_mode())
+            espcandle::apply_custom_pwm();
 
 # -- Lights -----------------------------------------------------------------
 # Primary HA light = RGB strip. In a scene preset, its brightness is the scene
@@ -431,6 +516,30 @@ select:
             espcandle::apply_custom_pwm();
           }
           id(applying_preset) = false;
+
+  # Which LED board is fitted (version on its silkscreen). Stored in flash, so
+  # it survives reboots and OTA updates; the default for a fresh flash is the
+  # top_board substitution. See the white_v1x_* substitutions above.
+  - platform: template
+    name: "Top Board"
+    id: top_board
+    icon: mdi:chip
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: "${top_board}"
+    options:
+      - "v1.3"
+      - "v1.4"
+      - "v1.6"
+    on_value:
+      - if:
+          condition:
+            lambda: "return id(top_board_ready);"
+          then:
+            - script.execute:
+                id: apply_top_board
+                index: !lambda "return i;"
 
 # -- Channel levels + enables (Custom / device page) ------------------------
 # Scenes own outputs while selected. Any slider/enable change → Custom.

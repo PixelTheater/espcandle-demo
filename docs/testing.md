@@ -89,6 +89,19 @@ The `ESP Candle` light has scene effects: **Warm Glow**, **Natural**, **Ember**,
 10. **Regression — Magic channel UI**: select **Magic** — **Red** and **UV** enables should be on (≈40% / ≈55%), **RGB Strip** on, White off. Toggling **Red** off must leave for **Custom**, stop Magic (strip dark, **RGB Strip** off — not solid white), extinguish red PWM, and leave UV at its level if still enabled.
 11. **Button**: short-press cycles Warm Glow → Natural → Candle → Wifi RSSI → Color → Magic → …. Hold 3–10s then release to toggle on/off. Hold 10s to factory-reset.
 12. **Regression — boot always Off**: with a scene running (e.g. Magic at high UV), Restart from HA (or power-cycle). After boot, Preset must be **Off**, all channels dark. HA sliders/enables should read 0 / off. Then repeat item 1 (Off → light on → Custom, strip lit).
+13. **Top Board**: set it to the version printed on the top board. The log shows `Top board v1.x: white PWM … Hz, …–… % duty`. Restart: the choice is kept, and the log line repeats at boot. In Custom with White at 50 %, changing Top Board changes the white at once (no need to move the slider).
+
+### Whites per top board
+
+With Top Board set right, in Custom, White enabled:
+
+| Top | White 1 % | White 100 % | Measure |
+|---|---|---|---|
+| v1.3 | both whites faintly lit (no dead zone at the bottom of the slider) | about as bright as a v1.4 top at 100 % | If one white stays dark at 1–3 %, raise `white_v13_min_power` a little for that candle |
+| v1.4 | faint | as before this change (40 % cap) | — |
+| v1.6 | faint, smooth steps from 1 % up | about as bright as a v1.4 top at 100 % | Voltage across R4 and R5 at 100 %: about 0.9 V (≈ 50 mA) |
+
+Then run **Candle** on each top next to a v1.4 candle: the flame should look about as bright. The v1.6 match rests on an estimate of its LEDs' light per mA; if it is clearly brighter or dimmer, adjust `white_v16_max_power` and note the measurement in the CHANGELOG.
 
 ### If an effect looks wrong
 
@@ -127,13 +140,13 @@ GitHub Actions workflow: `.github/workflows/ci.yml` (push / PR).
 | Job | What it runs |
 |---|---|
 | `esphome-smoke` | `make smoke-test` (Python 3.13 + `esphome/requirements.txt`) |
-| `pio-demo` | `pio run -e esp32s3` (standalone demo firmware) |
+| `pio-demo` | `pio run -e esp32s3 -e esp32s3-top-v13 -e esp32s3-top-v16` (standalone demo firmware, one env per top board) |
 
 Local equivalent before opening a PR:
 
 ```bash
 make smoke-test
-pio run -e esp32s3
+pio run -e esp32s3 -e esp32s3-top-v13 -e esp32s3-top-v16
 ```
 
 On-device / HA checks remain manual (sections 2–5).

@@ -70,5 +70,5 @@ jobs:
           restore-keys: |
             pio-${{ runner.os }}-
 
-      - name: Build esp32s3 env
-        run: pio run -e esp32s3
+      - name: Build the env for each top board (v1.4, v1.3, v1.6)
+        run: pio run -e esp32s3 -e esp32s3-top-v13 -e esp32s3-top-v16

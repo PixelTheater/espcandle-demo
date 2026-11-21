@@ -2,6 +2,7 @@
 #
 #   make smoke-test     # validate YAMLs + compile factory (no hardware)
 #   make factory-run    # compile, flash, and monitor factory image
+#   make factory-run TOP=v1.6   # same, Top Board default v1.6 on a fresh flash
 #
 # ESPHOME defaults to .venv/bin/esphome when present, otherwise `esphome` on
 # PATH (CI). Override: make smoke-test ESPHOME=esphome@2026.6.5

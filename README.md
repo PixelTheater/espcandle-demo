@@ -28,6 +28,7 @@ The primary firmware path. Provision over Bluetooth or USB (Improv), adopt in Ho
 | **Preset** | Scene: Off, Warm Glow, Natural, Ember, UV Accent, Candle (40%), Wifi RSSI (70%), Color (50%), Magic, Custom |
 | **White / Red / UV** | Level (%) + enable switch. Any change leaves the scene for **Custom**; PWM is absolute (not gated by the RGB light) |
 | **RGB Strip** | Gates WS2812 output only; colour is preserved when off. Does not affect White/Red/UV |
+| **Top Board** (config) | Which LED board is fitted: v1.3, v1.4 or v1.6 (printed on the top board). Sets how the warm whites are driven; stored across reboots and updates. See [Board versions](#board-versions) |
 | **Restart / Safe Mode / Factory Reset** | Recovery |
 | **Internal Temperature** | ESP32 core temperature |
 
@@ -40,6 +41,7 @@ Boot button: short-press cycles Warm Glow → Natural → Candle → Wifi RSSI �
 3. Pick your Wi-Fi network, enter the password, submit (BLE Improv).
 4. When the candle appears under Discovered, tap **Configure** — HA stores a per-device Noise key on the candle. No key to paste.
 5. Done. Lights, presets, and diagnostics appear as above.
+6. If the top board is not v1.4, set **Top Board** on the device page to the version printed on it (v1.3 or v1.6). A v1.6 top works on the v1.4 setting, only dimmer.
 
 ### Web flasher
 
@@ -68,6 +70,7 @@ pip install -r esphome/requirements.txt
 
 make smoke-test      # config + compile, no hardware (PR gate)
 make factory-run     # compile + flash + monitor factory image
+make factory-run TOP=v1.6   # same, with Top Board defaulting to v1.6 on a fresh flash
 ```
 
 Run these from the **repo root** (the root `Makefile` forwards into `esphome/`). Close any PlatformIO serial monitor first so the USB port is free. CI runs the same smoke test plus a PlatformIO demo build (`.github/workflows/ci.yml`). Full on-device runbook: [docs/testing.md](docs/testing.md).
@@ -84,14 +87,15 @@ Offline static-key builds: copy `esphome/secrets-example.yaml` → `esphome/secr
 
 Custom effects live in `esphome/includes/candle_effects.h`. Modder options (I2C, GPIO 10/11/12, web server, alternate channel wiring): [docs/modders.md](docs/modders.md).
 
-**Customising hardware for variants:** pin assignments and power caps are `substitutions:` in `espcandle.base.yaml`. Override them in the per-device YAML before the `packages:` line:
+**Customising hardware for variants:** pin assignments, the default top board and power caps are `substitutions:` in `espcandle.base.yaml`. Override them in the per-device YAML before the `packages:` line. The white channel has a frequency, min power and max power per top (`white_v13_*`, `white_v14_*`, `white_v16_*`); for example, to start a v1.3 candle's whites a little lower in its driver's dead zone:
 
 ```yaml
 substitutions:
   name: esp32-candle-prototype
   friendly_name: Prototype
   led_pin: GPIO32
-  white_max_power: "50%"
+  top_board: "v1.3"
+  white_v13_min_power: "0.18"
 
 packages:
   espcandle: !include espcandle.base.yaml
@@ -136,14 +140,26 @@ Next steps when ready to apply: open a PR on [devices.esphome.io](https://github
 
 ### LED Configuration
 
-- **2x Bright White LEDs**: 2700K warm white, 0.5W at 150mA, 20,000 mcd
+- **2x Warm White LEDs**: driver and LED depend on the top board version (below)
 - **2x Deep Red LEDs**: 620nm wavelength, 730 mcd
 - **1x UV LED**: 365nm wavelength (PAM2804 driver, ~300mA)
 - **20x RGB WS2812 LEDs**: 2020 package addressable LEDs
 
-### Hardware v1.4
+### Board versions
 
-Both white LED channels now use a BCR421 linear constant-current regulator driver with 67-21S/KK7C-H276034Z15 LEDs (2700K, 150mA max, Vf around 3.2V). The **UV channel** uses a PAM2804 driver, 4.7uH inductor and 0.33 ohm Rsense at 300mA. The red LEDs are controlled with a N-channel mosfet (AO3402)PWM circuit, 35ma each. With all channels active, power consumption can reach 1.5w.
+The candle is a stack of two boards. All base boards (v1.3, v1.3.1, v1.6) and top boards (v1.3, v1.4, v1.6) share the header pinout and the GPIO map, so any base fits any top and the firmware needs no base setting. Only the top's warm whites are driven differently; set **Top Board** (or `top_board` / the standalone env) to match:
+
+| Top | White driver | White current | White LEDs | Firmware setting |
+|---|---|---|---|---|
+| v1.3 | PAM2804 buck (1 Ω sense) | 100 mA | Everlight 67-21S | 500 Hz; duty 20–50 % (lights from about 20 %) |
+| v1.4 | BCR421U linear, REXT 10 Ω | about 88 mA | 2835 warm white | 5 kHz; duty up to 40 % (as since 0.2.0) |
+| v1.6 | BCR421UW6Q linear, REXT 20 Ω | about 50 mA | ams OSRAM 2700 K, CRI 97 | 4 kHz (14-bit); duty up to 100 % |
+
+The duty caps give about the same white at 100 % on every top, so scenes and sliders look alike. The v1.6 LEDs give about 0.7× the light per mA of v1.4's (estimated from the datasheets' flux tables), so v1.6 at 100 % matches v1.4 at its 40 % cap, with about five times finer steps at the low end. The v1.3 numbers come from bench tests of that top in 2026-02; its two PAM2804s can differ a little, so `white_v13_min_power` can be tuned per candle. The default is v1.4: a v1.6 top is only dimmer on it, while the v1.6 setting on a v1.4 top drives its whites at their full 88 mA.
+
+The UV channel uses a PAM2804 driver, 4.7 µH inductor and 0.33 Ω sense at about 300 mA on every top. The red LEDs are switched by an AO3402 N-channel MOSFET with a series resistor each (82 Ω on v1.3, 68 Ω since v1.4), about 40 mA each.
+
+The v1.6 base has a 2.5 A buck (LMR51625, was 1 A), a TPS2116 mux between USB and EXT power, reverse-polarity protection on EXT, ESD protection on USB, and 4.7 kΩ I2C pull-ups fitted (earlier bases have none). With all channels active, power consumption can reach 1.5 W.
 
 ![LED Configuration](media/candle-leds-and-features.jpg)
 
@@ -167,15 +183,15 @@ Both white LED channels now use a BCR421 linear constant-current regulator drive
 | 8 | I2C SDA | I2C data line |
 | 9 | I2C SCL | I2C clock line |
 | 10-12 | Extra GPIO | Available as digital outputs/inputs |
-| 15 | PWM LED 1 | Bright White LED (2700K, 0.5W at 150mA) |
-| 16 | PWM LED 2 | Bright White LED (2700K, 0.5W at 150mA) |
+| 15 | PWM LED 1 | Warm White LED 1 (see Board versions) |
+| 16 | PWM LED 2 | Warm White LED 2 (see Board versions) |
 | 17 | PWM LED 3 | UV LED (365nm) |
 | 18 | PWM LED 4 | Deep Red LED (620nm, 730 mcd) |
 | 33 | WS2812 | RGB LED strip data (20x 2020 LEDs) |
 
 ### Additional Features
 
-- **I2C Bus** (GPIO8/9): For sensors and expansion modules
+- **I2C Bus** (GPIO8/9): For sensors and expansion modules (pull-ups on the v1.6 base; earlier bases rely on the module's own)
 - **Internal Temperature Sensor**: Monitor ESP32 core temperature
 - **Extra GPIO Pins** (GPIO10-12): Configurable digital I/O
 - **WiFi Connectivity**: For Home Assistant integration, ESPNow, etc.
@@ -189,10 +205,11 @@ Optional demo firmware with built-in lighting modes and button control (no Home 
 **Controls:** short press cycles modes; long press (3s) power on/off; serial at 115200 baud; EN for hardware reset.
 
 ```bash
-pio run --target upload
+pio run -e esp32s3 --target upload            # v1.4 top
+pio run -e esp32s3-top-v16 --target upload    # v1.6 top (esp32s3-top-v13 for v1.3)
 ```
 
-Pinout and caps live in `src/config.h`: PWM 5kHz 12-bit; channel caps white 40%, UV 75%, red 80%; WS2812 brightness 64/255 on GPIO33.
+Pinout and caps live in `src/config.h`: PWM 12-bit, 5 kHz for UV and red; the whites at their top's frequency and caps (Board versions above, `ESPCANDLE_TOP`); UV 75%, red 80%; WS2812 brightness 64/255 on GPIO33.
 
 ## Hardware Setup
 

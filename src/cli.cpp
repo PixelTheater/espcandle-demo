@@ -557,7 +557,7 @@ static void dispatchTest(char* line) {
     } else if (strcmp(line, "exit") == 0) {
         testAllOff();
         for (int i = 0; i < 4; i++) {
-            ledcAttach(LED_PINS[i], PWM_FREQ, PWM_RESOLUTION);
+            ledcAttach(LED_PINS[i], pwmFreqFor(i), PWM_RESOLUTION);
             ledcWrite(LED_PINS[i], 0);
         }
         FastLED.setBrightness(WS2812_BRIGHTNESS);

@@ -184,6 +184,8 @@ void setup() {
         ESP.getChipCores(), getCpuFrequencyMhz());
     Serial.printf("Flash: %d KB  Free heap: %d B\n",
         ESP.getFlashChipSize() / 1024, ESP.getFreeHeap());
+    Serial.printf("Top board: v1.%d  White PWM: %.0f Hz, %.0f-%.0f%% duty\n",
+        ESPCANDLE_TOP % 10, WHITE_PWM_FREQ, WHITE_MIN_POWER * 100.0f, WHITE_MAX_POWER * 100.0f);
     Serial.printf("PWM freq: %.0f Hz  Resolution: %d-bit  Max duty: %d\n",
         PWM_FREQ, PWM_RESOLUTION, MAX_DUTY);
     Serial.printf("WS2812 pin: %d  LEDs: %d\n", WS2812_PIN, NUM_LEDS);
@@ -199,7 +201,7 @@ void setup() {
 
     // Initialize PWM LEDs
     for (int i = 0; i < 4; i++) {
-        ledcAttach(LED_PINS[i], PWM_FREQ, PWM_RESOLUTION);
+        ledcAttach(LED_PINS[i], pwmFreqFor(i), PWM_RESOLUTION);
         ledcWrite(LED_PINS[i], 0);
     }
 
@@ -486,8 +488,8 @@ void updateCandleMode() {
     s.outRed += (targetRed - s.outRed) * alpha;
 
     // ── Write to LEDs ─────────────────────────────────────────────────────────
-    ledcWrite(LED_PINS[WHITE_LED_1], (uint32_t)constrain((int)(s.outW1  * MAX_DUTY), 0, MAX_DUTY));
-    ledcWrite(LED_PINS[WHITE_LED_2], (uint32_t)constrain((int)(s.outW2  * MAX_DUTY), 0, MAX_DUTY));
+    ledcWrite(LED_PINS[WHITE_LED_1], whiteDuty(s.outW1));
+    ledcWrite(LED_PINS[WHITE_LED_2], whiteDuty(s.outW2));
     ledcWrite(LED_PINS[RED_LED],     (uint32_t)constrain((int)(s.outRed * MAX_DUTY), 0, MAX_DUTY));
     ledcWrite(LED_PINS[UV_LED], 0);
 }
